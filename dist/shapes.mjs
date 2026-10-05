@@ -1,6 +1,6 @@
 // Kid Pix-inspired interactions; geometry stays vector data, never sampled pixels.
 export const SHAPES={
-  pen:{label:'Freehand',strokes:1},line:{label:'Line',strokes:1},
+  pen:{label:'Pen',strokes:1},line:{label:'Line',strokes:1},
   circle:{label:'Circle',strokes:2},oval:{label:'Oval',strokes:2},
   rectangle:{label:'Rectangle',strokes:4},triangle:{label:'Triangle',strokes:3},
   diamond:{label:'Diamond',strokes:4},
@@ -43,17 +43,6 @@ export function mirrorStrokes(strokes,mode){
   return result;
 }
 
-// Bounded preset variations: editable vectors, at most twelve contours.
-export function randomDrawing({variant,shift,width,height}){
-  const recipes=[
-    [['oval',.12,.22,.42,.72,'blue'],['triangle',.52,.18,.84,.8,'gold']],
-    [['diamond',.15,.15,.46,.85,'rose'],['oval',.54,.32,.88,.68,'green']],
-    [['triangle',.1,.2,.38,.75,'copper'],['triangle',.38,.2,.66,.75,'teal'],['triangle',.66,.2,.94,.75,'gold']],
-    [['oval',.12,.12,.88,.88,'coral'],['line',.12,.72,.88,.28,'cream'],['line',.12,.28,.88,.72,'blue']],
-  ];
-  return recipes[variant].flatMap(([kind,x1,y1,x2,y2,pen],index)=>shapePaths(kind,[{x:x1,y:y1+shift},{x:x2,y:y2+shift}],{width,height}).map(points=>({pen,object:index+1,points})));
-}
-
 export function eraseObjectAt(strokes,point,radiusX,radiusY){
   let hit,nearest=1;
   for(const stroke of strokes){
@@ -71,7 +60,7 @@ export function eraseObjectAt(strokes,point,radiusX,radiusY){
 }
 
 // Scene outlines use the same editable, grouped contours as shape gestures.
-export const SCENES={mountains:{label:'Mountains & cloud'},forest:{label:'Forest'},sailboat:{label:'Sailboat'}};
+export const SCENES={mountains:{label:'Mountains & cloud'},forest:{label:'Forest'},sailboat:{label:'Sailboat'},orbits:{label:'Orbit duet'},diamonds:{label:'Diamond echoes'},waves:{label:'Crossing waves'},stairs:{label:'Staircase canon'}};
 export function sceneDrawing(scene,{width,height}){
   const strokes=[];let object=0;
   const path=(pen,coordinates)=>strokes.push({pen,object:++object,points:coordinates.map(([x,y])=>({x,y}))});
@@ -91,6 +80,20 @@ export function sceneDrawing(scene,{width,height}){
     path('cream',[[.52,.7],[.52,.16],[.27,.62],[.52,.62],[.72,.62],[.52,.16]]);
     for(const y of [.88,.95])path('blue',[[.06,y],[.2,y-.03],[.35,y],[.5,y-.03],[.65,y],[.8,y-.03],[.95,y]]);
     shape('gold','oval',[.79,.1],[.91,.24]);
+  }else if(scene==='orbits'){
+    shape('blue','oval',[.08,.15],[.92,.85]);
+    shape('rose','oval',[.22,.3],[.78,.7]);
+    path('gold',[[.08,.5],[.92,.5]]);
+  }else if(scene==='diamonds'){
+    for(const [x,pen] of [[.08,'teal'],[.36,'copper'],[.64,'rose']])shape(pen,'diamond',[x,.2],[x+.28,.8]);
+  }else if(scene==='waves'){
+    for(const [pen,phase] of [['blue',0],['coral',Math.PI]])path(pen,Array.from({length:97},(_,i)=>[.04+.92*i/96,.5+.29*Math.sin(i/96*Math.PI*4+phase)]));
+    path('gold',[[.04,.82],[.96,.82]]);
+  }else if(scene==='stairs'){
+    for(const [pen,start,y] of [['teal',.06,.76],['gold',.2,.86],['rose',.34,.66]]){
+      const coordinates=[];for(let i=0;i<6;i++){coordinates.push([start+i*.085,y-i*.09],[start+(i+1)*.085,y-i*.09]);}
+      path(pen,coordinates);
+    }
   }else throw new Error('UNKNOWN_SCENE');
   return strokes;
 }
@@ -110,16 +113,16 @@ export function crossingsAt(strokes,x){
   }
   return hits;
 }
-export function snapToGrid(p,columns,rows){
-  return {x:(Math.min(columns-1,Math.max(0,Math.floor(p.x*columns)))+.5)/columns,y:Math.min(rows-1,Math.max(0,Math.round(p.y*(rows-1))))/(rows-1)};
+export function snapToGrid(p,columns,rows,positions){
+  return {x:(Math.min(columns-1,Math.max(0,Math.floor(p.x*columns)))+.5)/columns,y:positions?positions.reduce((a,b)=>Math.abs(b-p.y)<Math.abs(a-p.y)?b:a):Math.min(rows-1,Math.max(0,Math.round(p.y*(rows-1))))/(rows-1)};
 }
-export function gridCells(strokes,columns,rows){
+export function gridCells(strokes,columns,rows,positions){
   const cells=new Map();
   for(const stroke of strokes)for(let i=0;i<stroke.points.length;i++){
     const a=stroke.points[i],b=stroke.points[Math.min(i+1,stroke.points.length-1)];
     const steps=Math.max(1,Math.ceil(Math.max(Math.abs(b.x-a.x)*columns,Math.abs(b.y-a.y)*(rows-1))*2));
     for(let step=0;step<=steps;step++){
-      const p=snapToGrid({x:a.x+(b.x-a.x)*step/steps,y:a.y+(b.y-a.y)*step/steps},columns,rows);
+      const p=snapToGrid({x:a.x+(b.x-a.x)*step/steps,y:a.y+(b.y-a.y)*step/steps},columns,rows,positions);
       cells.set(`${p.x}:${p.y}:${stroke.pen}`,{...p,pen:stroke.pen});
     }
   }

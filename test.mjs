@@ -127,13 +127,8 @@ assert.deepEqual(mirrored[2].points,diagonal.points.map(p=>({x:p.x,y:1-p.y})));
 assert.equal(mirrorStrokes([{...line,points:[{x:.3,y:.5},{x:.7,y:.5}]}],'both').length,1,'Axis-aligned duplicate voices must collapse');
 assert.deepEqual(parseDrawing({...saved,pages:[{strokes:mirrored}],selectedPage:0}).pages[0].strokes,mirrored);
 console.log('Shape contours, reverse drags, round circles, independent oval voices, mirrors, and unchanged saved format passed.');
-const {randomDrawing,eraseObjectAt}=await import('./dist/shapes.mjs');
+const {eraseObjectAt}=await import('./dist/shapes.mjs');
 const {remainingEvent}=await import('./dist/music.mjs');
-for(let variant=0;variant<4;variant++)for(const shift of [-.06,0,.06]){
-  const drawing=randomDrawing({variant,shift,width:800,height:400}).map(s=>({...s,sound:PENS[s.pen].sound}));
-  assert.ok(drawing.length<=12&&new Set(drawing.map(s=>s.pen)).size>=2);
-  assert.deepEqual(parseDrawing({...saved,pages:[{strokes:drawing}],selectedPage:0}).pages[0].strokes,drawing);
-}
 const grouped=oval.map(points=>({...line,object:1,points})),other={...line,object:2,points:[{x:.2,y:.25},{x:.7,y:.25}]};
 assert.deepEqual(eraseObjectAt([...grouped,other],{x:.45,y:.25},.01,.01),grouped,'Nearest overlapping object alone must be removed');
 assert.deepEqual(eraseObjectAt(grouped,{x:.45,y:.25},.01,.01),[],'Both contours must erase together');
@@ -143,7 +138,7 @@ assert.throws(()=>parseDrawing({...saved,pages:[{strokes:[{...line,object:65}]}]
 const held={time:0,duration:3,midi:60,sound:'flute',path:[{time:0,midi:60,duration:1},{time:1,midi:64,duration:1},{time:2,midi:67,duration:1}]};
 const resumed=remainingEvent(held,1.5);assert.equal(resumed.midi,64);assert.equal(resumed.duration,1.5);assert.deepEqual(resumed.path.map(n=>[n.time,n.midi]),[[0,64],[.5,67]]);
 assert.equal(remainingEvent(held,3),null);assert.equal(remainingEvent(held,0),null);
-console.log('Bounded random presets, object erasing, grouped file compatibility, brush identity and resumed pitch paths passed.');
+console.log('Object erasing, grouped file compatibility, brush identity and resumed pitch paths passed.');
 const {SCENES,sceneDrawing,crossingsAt,snapToGrid,gridCells}=await import('./dist/shapes.mjs');
 for(const scene of Object.keys(SCENES)){
   const strokes=sceneDrawing(scene,aspect).map(s=>({...s,sound:PENS[s.pen].sound}));
@@ -162,3 +157,26 @@ assert.ok(cells.every(p=>p.x>0&&p.x<1&&p.y>=0&&p.y<=1));
 assert.ok(new Set(cells.map(p=>p.y)).size===11,'Diagonal crosses every pitch row');
 assert.deepEqual(gridCells([],32,11),[]);
 console.log('Editable scene files and audio, contour crossings, edge snapping, and grid projection passed.');
+const {snapPitch,pitchPositions,pitchAt}=await import('./dist/music.mjs');
+const raw={x:.303,y:.437};
+assert.deepEqual(snapPitch(raw,pitches,'free'),raw);
+assert.equal(pitchAt(snapPitch(raw,pitches,'whole').y,pitchPositions(pitches)).midi,62);
+assert.equal(pitchAt(snapPitch(raw,pitches,'half').y,pitchPositions(pitches,1)).midi,61);
+assert.equal(pitchAt(snapPitch(raw,pitches,'quarter').y,pitchPositions(pitches,.5)).midi,61.5);
+for(const step of [1,.5]){
+  const note=pitchPositions(pitches,step).find(n=>n.midi===61+(step===.5?.5:0));
+  const tuned={...line,pitchStep:step,points:[{x:.1,y:note.y},{x:.9,y:note.y}]};
+  for(const divisions of [96,16])assert.ok(compileLoop([tuned],{...songSettings,divisions}).events.every(e=>e.midi===note.midi));
+  assert.deepEqual(parseDrawing({...saved,pages:[{strokes:[tuned]}],selectedPage:0}).pages[0].strokes,[tuned]);
+}
+assert.throws(()=>parseDrawing({...saved,pages:[{strokes:[{...line,pitchStep:.25}]}],selectedPage:0}));
+const microMidi=midiFile({events:[{time:0,duration:1,midi:61.5,sound:'keys'},{time:0,duration:1,midi:61,sound:'keys'}],duration:1},120);
+let cursor=22;const microMessages=[];
+while(cursor<microMidi.length){let byte;do{byte=microMidi[cursor++];}while(byte&128);const code=microMidi[cursor++];if(code===255){cursor++;const length=microMidi[cursor++];cursor+=length;}else{const length=(code&240)===192?1:2;microMessages.push({code,data:[...microMidi.slice(cursor,cursor+length)]});cursor+=length;}}
+const bend=microMessages.find(m=>(m.code&240)===224);assert.ok(bend);assert.equal(bend.data[0]+128*bend.data[1],10240,'Quarter tone MIDI bend must be +50 cents');
+const noteOns=microMessages.filter(m=>(m.code&240)===144);assert.equal(new Set(noteOns.map(m=>m.code&15)).size,2,'Bent and natural notes must use different channels');assert.ok(noteOns.every(m=>m.data[0]===61));
+const capacityMidi=Object.keys(PENS).flatMap(pen=>[0,.5].map(fraction=>({time:0,duration:1,midi:60+fraction,sound:PENS[pen].sound})));
+assert.throws(()=>midiFile({events:capacityMidi,duration:1},120),/MIDI_CHANNEL_LIMIT/);
+console.log('Scale, semitone and quarter-tone snapping, tuned playback and saved files, MIDI bends, separate channels and channel capacity passed.');
+
+for(let row=0;row<pitches.length-1;row++)assert.equal(pitchAt((row+.5)/(pitches.length-1),pitchPositions(pitches)).midi,pitches[row+1].midi,'Legacy scale boundaries choose the lower note');

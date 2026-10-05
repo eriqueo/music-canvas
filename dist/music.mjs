@@ -48,7 +48,26 @@ export function notesFor(key, scale, octave, range = 2) {
     return { midi, label: KEYS[midi % 12], octave: Math.floor(midi / 12) - 1, degree: degree % intervals.length + 1 };
   });
 }
-export function pitchAt(y, notes) { return notes[Math.max(0, Math.min(notes.length - 1, Math.round(y * (notes.length - 1))))]; }
+export const SNAP_MODES={free:{label:'Free'},whole:{label:'Whole'},half:{label:'Half',step:1},quarter:{label:'Quarter',step:.5}};
+export function pitchPositions(notes,step){
+  if(!step)return notes.map((note,i)=>({...note,y:i/(notes.length-1)}));
+  const high=notes[0].midi,low=notes.at(-1).midi;
+  return Array.from({length:Math.round((high-low)/step)+1},(_,i)=>{
+    const midi=high-i*step;let row=0;
+    while(row<notes.length-2&&midi<notes[row+1].midi)row++;
+    const y=(row+(notes[row].midi-midi)/(notes[row].midi-notes[row+1].midi))/(notes.length-1);
+    const integer=Math.floor(midi);return {midi,y,label:KEYS[integer%12],octave:Math.floor(integer/12)-1,cents:midi%1?50:0};
+  });
+}
+export function pitchAt(y,notes){
+  if(notes[0].y===undefined)return notes[Math.max(0,Math.min(notes.length-1,Math.round(y*(notes.length-1))))];
+  return notes.reduce((nearest,note)=>Math.abs(note.y-y)<=Math.abs(nearest.y-y)+1e-12?note:nearest);
+}
+export function snapPitch(point,notes,mode){
+  if(mode==='free')return point;
+  const note=pitchAt(point.y,pitchPositions(notes,SNAP_MODES[mode].step));
+  return {...point,y:note.y};
+}
 export const FREE_TIMING = 96; // Version-1 drawings use 96 for the Free menu option.
 function freeEvents(strokes, notes, bpm, swing, bars) {
   const duration=60/bpm*PULSES_PER_LOOP*bars, count=FREE_TIMING*bars, pulse=duration/count;
@@ -63,18 +82,21 @@ function freeEvents(strokes, notes, bpm, swing, bars) {
     if(pieces>=LIMITS.events){limited=true;return;}
     pieces++;list.push({midi,sound,lane,start,end});ranges.set(key,list);
   };
-  for(const [lane,stroke] of strokes.entries())for(let i=0;i<Math.max(1,stroke.points.length-1);i++){
-    let a=stroke.points[i],b=stroke.points[Math.min(i+1,stroke.points.length-1)];
-    if(a.x>b.x)[a,b]=[b,a];
-    const cuts=[0,1],dy=b.y-a.y;
-    if(dy)for(let row=0;row<notes.length-1;row++){
-      const fraction=((row+.5)/(notes.length-1)-a.y)/dy;
-      if(fraction>0&&fraction<1)cuts.push(fraction);
-    }
-    cuts.sort((a,b)=>a-b);
-    for(let j=1;j<cuts.length;j++){
-      const from=cuts[j-1],to=cuts[j],midi=pitchAt(a.y+dy*(from+to)/2,notes).midi;
-      add(midi,stroke.sound,lane,a.x+(b.x-a.x)*from,a.x+(b.x-a.x)*to);
+  for(const [lane,stroke] of strokes.entries()){
+    const rows=pitchPositions(notes,stroke.pitchStep);
+    for(let i=0;i<Math.max(1,stroke.points.length-1);i++){
+      let a=stroke.points[i],b=stroke.points[Math.min(i+1,stroke.points.length-1)];
+      if(a.x>b.x)[a,b]=[b,a];
+      const cuts=[0,1],dy=b.y-a.y;
+      if(dy)for(let row=0;row<rows.length-1;row++){
+        const fraction=((rows[row].y+rows[row+1].y)/2-a.y)/dy;
+        if(fraction>0&&fraction<1)cuts.push(fraction);
+      }
+      cuts.sort((a,b)=>a-b);
+      for(let j=1;j<cuts.length;j++){
+        const from=cuts[j-1],to=cuts[j],midi=pitchAt(a.y+dy*(from+to)/2,rows).midi;
+        add(midi,stroke.sound,lane,a.x+(b.x-a.x)*from,a.x+(b.x-a.x)*to);
+      }
     }
   }
   const events=[];
@@ -94,6 +116,7 @@ export function loopEvents(strokes, notes, bpm, swing, divisions = 16, bars = 1)
   const count = divisions * bars * PULSES_PER_LOOP / 4;
   const bins = Array.from({ length: count }, () => new Map());
   for (const stroke of strokes) {
+    const rows=pitchPositions(notes,stroke.pitchStep);
     const points = stroke.points;
     for (let i = 0; i < points.length; i++) {
       const a = points[i], b = points[Math.min(i + 1, points.length - 1)];
@@ -102,7 +125,7 @@ export function loopEvents(strokes, notes, bpm, swing, divisions = 16, bars = 1)
       for (let bin = first; bin <= last; bin++) {
         const x = Math.max(low, Math.min(high, (bin + .5) / count));
         const fraction = Math.abs(b.x - a.x) < 1e-8 ? 0 : (x - a.x) / (b.x - a.x);
-        const midi = pitchAt(a.y + fraction * (b.y - a.y), notes).midi;
+        const midi = pitchAt(a.y + fraction * (b.y - a.y), rows).midi;
         bins[bin].set(`${stroke.sound}:${midi}`, { midi, sound: stroke.sound });
       }
     }
@@ -212,8 +235,9 @@ export function parseDrawing(value) {
   }
   const strokes = value.strokes.map(stroke => {
     if (!stroke || !Object.hasOwn(PENS,stroke.pen) || !Object.hasOwn(SOUNDS,stroke.sound) || !Array.isArray(stroke.points) || !stroke.points.length || stroke.points.length > LIMITS.points) fail();
+    if(stroke.pitchStep!==undefined&&!Object.values(SNAP_MODES).some(mode=>mode.step===stroke.pitchStep))fail();
     if(stroke.object!==undefined&&(!Number.isInteger(stroke.object)||stroke.object<1||stroke.object>LIMITS.strokes))fail();
-    return { ...(stroke.object===undefined?{}:{object:stroke.object}), pen: stroke.pen, sound: stroke.sound, points: stroke.points.map(p => { if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) fail(); return { x:p.x,y:p.y }; }) };
+    return { ...(stroke.pitchStep===undefined?{}:{pitchStep:stroke.pitchStep}), ...(stroke.object===undefined?{}:{object:stroke.object}), pen: stroke.pen, sound: stroke.sound, points: stroke.points.map(p => { if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) fail(); return { x:p.x,y:p.y }; }) };
   });
   return { version:DRAWING_VERSION, settings:{key:s.key,scale:s.scale,octave:s.octave,range:s.range,bpm:s.bpm,swing:s.swing,divisions:s.divisions,bars:s.bars,parts}, pages:[{strokes}], selectedPage:0, song:false };
 }
@@ -226,15 +250,29 @@ export function midiFile({ events, duration }, bpm) {
   const division = 480;
   const tempo = Math.round(60000000 / bpm);
   const toTicks = t => Math.round(t * bpm / 60 * division);
-  const channel=e=>Object.hasOwn(DRUMS,e.sound)?9:INSTRUMENTS[e.sound].channel;
+  const key=e=>`${INSTRUMENTS[e.sound].program}:${e.midi%1}`;
+  const channels=new Map(),occupied=new Set([9]);
+  for(const e of events)if(!Object.hasOwn(DRUMS,e.sound)&&e.midi%1===0){channels.set(key(e),INSTRUMENTS[e.sound].channel);occupied.add(INSTRUMENTS[e.sound].channel);}
+  for(const e of events)if(!Object.hasOwn(DRUMS,e.sound)&&!channels.has(key(e))){
+    const available=Array.from({length:16},(_,i)=>i).find(i=>!occupied.has(i));
+    if(available===undefined)throw new Error('MIDI_CHANNEL_LIMIT');
+    occupied.add(available);channels.set(key(e),available);
+  }
+  const channel=e=>Object.hasOwn(DRUMS,e.sound)?9:channels.get(key(e));
   const timeline = events.flatMap(e => [
-    { tick: toTicks(e.time), bytes: [0x90|channel(e), e.midi, 90] },
-    { tick: toTicks(e.time + e.duration), bytes: [0x80|channel(e), e.midi, 0] },
+    { tick: toTicks(e.time), bytes: [0x90|channel(e), Math.floor(e.midi), 90] },
+    { tick: toTicks(e.time + e.duration), bytes: [0x80|channel(e), Math.floor(e.midi), 0] },
   ]).sort((a, b) => a.tick - b.tick || a.bytes[0] - b.bytes[0]);
   const track = [0, 0xff, 0x51, 3, tempo >> 16 & 255, tempo >> 8 & 255, tempo & 255];
   const programs=new Map();
   for(const e of events)if(!Object.hasOwn(DRUMS,e.sound))programs.set(channel(e),INSTRUMENTS[e.sound].program);
   for(const [channel,program] of programs)track.push(0,0xc0|channel,program);
+  for(const [id,ch] of channels){
+    // RPN 0 sets a two-semitone bend range; quarter tones use +50 cents.
+    const fraction=Number(id.split(':')[1]);if(!fraction)continue;
+    for(const [controller,value] of [[101,0],[100,0],[6,2],[38,0],[101,127],[100,127]])track.push(0,0xb0|ch,controller,value);
+    const bend=8192+Math.round(fraction/2*8192);track.push(0,0xe0|ch,bend&127,bend>>7);
+  }
   let previous = 0;
   for (const event of timeline) { track.push(...variableLength(event.tick - previous), ...event.bytes); previous = event.tick; }
   track.push(...variableLength(toTicks(duration) - previous), 0xff, 0x2f, 0);

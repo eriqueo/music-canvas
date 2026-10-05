@@ -78,6 +78,14 @@ try{
     const cancelled=beforeEnd?await beforeEnd():false;
     if(!cancelled)await send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
   }
+  await tap('#stop');
+  const hoverRect=await evaluate(`(()=>{const r=document.querySelector('#canvas').getBoundingClientRect();return {x:r.x+r.width*.5,y:r.y+r.height*.5};})()`);
+  await send('Input.dispatchMouseEvent',{type:'mouseMoved',...hoverRect});
+  assert.equal(await evaluate(`document.querySelector('#playhead').style.display`),'block','Hover must show its line before drawing');
+  await draw([{x:.2,y:.3},{x:.4,y:.5}],false,async()=>{
+    assert.equal(await evaluate(`document.querySelector('#playhead').style.display`),'none','Hover line must hide during drawing');
+    assert.equal(await evaluate(`document.querySelectorAll('.crossing').length`),0,'Hover dots must hide during drawing');
+  });
   assert.equal(await evaluate(`document.querySelector('#timing').value`),'96');
   for(const [pen,{sound}] of Object.entries(PENS)){
     await tap(`[data-pen="${pen}"]`);
@@ -187,7 +195,7 @@ try{
   await open({...object,pages:[{strokes:[...object.pages[0].strokes,{pen:'gold',sound:'marimba',object:2,points:[{x:.15,y:.2},{x:.85,y:.2}]}]}]});
   await control('#erase-mode','object');await draw([{x:.5,y:.2}],false);
   assert.deepEqual((await save()).pages,object.pages,'One tap must remove only the topmost overlapping object, not replay deletion on release');
-  const beforeRandom=await save();await tap('#random');const generated=await save();assert.ok(generated.pages[0].strokes.length>=4);assert.ok(new Set(generated.pages[0].strokes.map(s=>s.pen)).size>=2);
+  const beforeRandom=await save();await control('#scene','surprise');const generated=await save();assert.ok(generated.pages[0].strokes.length>=3);assert.ok(new Set(generated.pages[0].strokes.map(s=>s.pen)).size>=2);
   await tap('#undo');assert.deepEqual((await save()).pages,beforeRandom.pages,'Randomize must be one reversible edit');
   await open({...emptySong,pages:[{strokes:[{pen:'blue',sound:'flute',points:[{x:0,y:.8},{x:1,y:.2}]}]}]});
   await tap('#play');await sleep(650);await tap('#pause');const held=await evaluate('document.querySelector("#progress").style.width');await sleep(300);
@@ -213,7 +221,7 @@ try{
   await tap('#pause');const markerPosition=await evaluate(`document.querySelector('#crossings').innerHTML`);await sleep(150);
   assert.equal(await evaluate(`document.querySelector('#crossings').innerHTML`),markerPosition,'Pause must freeze crossing dots');
   await tap('#stop');assert.equal(await evaluate(`document.querySelectorAll('#crossings .crossing').length`),0,'Stop clears playback dots');
-  await open(emptySong);await control('#drawing-view','grid');await draw([{x:.303,y:.437}]);
+  await open(emptySong);await control('#snap','whole');await control('#drawing-view','grid');await draw([{x:.303,y:.437}]);
   const gridDrawing=await save(),stroke=gridDrawing.pages[0].strokes[0];
   assert.equal(stroke.points.length,2,'A grid tap must draw one cell with its full time width');
   assert.ok(Math.abs(stroke.points[1].x-stroke.points[0].x-1/32)<1e-9);
@@ -224,6 +232,22 @@ try{
   assert.equal((await save()).pages[0].strokes.length,0,'Grid erase removes the tapped cell');
   await tap('#undo');assert.deepEqual((await save()).pages,gridDrawing.pages);
   await control('#drawing-view','drawing');
+  await open(emptySong);await control('#shape','pen');await tap('[data-pen="blue"]');
+  for(const view of ['drawing','grid'])for(const mode of ['free','whole','half','quarter']){
+    await control('#drawing-view',view);await control('#snap',mode);await draw([{x:.103,y:.437},{x:.903,y:.437}]);
+    const drawing=await save(),stroke=drawing.pages[0].strokes[0];
+    assert.equal(stroke.pitchStep,{half:1,quarter:.5}[mode]);
+    const y=stroke.points[0].y;
+    assert.ok(Math.abs(y-{free:.437,whole:.4,half:.45,quarter:.425}[mode])<.002,`${mode} pitch snapping must work in ${view}`);
+  }
+  const quarterSong=await save();await open(quarterSong);assert.deepEqual((await save()).pages,quarterSong.pages,'Quarter-tone resolution must round-trip');
+  await evaluate('probe.notes=[]');await tap('#play');await sleep(1000);await tap('#pause');
+  const actualMidi=await evaluate('probe.notes.map(f=>69+12*Math.log2(f/440))');
+  assert.ok(actualMidi.some(m=>Math.abs(m-61.5)<.001),'Live audio must play the quarter tone, not round it to a scale note');
+  await tap('#stop');await control('#drawing-view','drawing');await control('#snap','free');
+  assert.ok(await evaluate(`!document.querySelector('#random')`),'Surprise me must have one control in the Drawing menu');
+  for(const scene of ['orbits','diamonds','waves','stairs']){await control('#scene',scene);assert.ok((await save()).pages[0].strokes.length>=3);}
+  console.log('Pitch snapping in both views, Free geometry, saved quarter tones, microtonal live audio, combined Drawing menu and geometric presets passed.');
   console.log('Scene selection and Undo, hover and playback dots, frozen Pause markers, lossless view changes, snapped grid taps and grid erase passed.');
   console.log('Viewport bars, random drawings and Undo, saved object erase, brush erase, Pause/resume and Stop passed.');
   console.log('Touch shapes and preview, two-voice oval playback, round circles, shape Undo/Redo, mirrors, resize, save/open, capacity, and cancel passed.');

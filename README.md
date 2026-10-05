@@ -15,15 +15,20 @@ The workspace fits one viewport: teal drawing tools on the left, gold music and
 song controls on the right, and a copper player below. Phone layouts stack compact
 bars around the canvas; short screens scroll inside the tool bars. Pause preserves
 the audio-clock position and remaining held-note pitch changes; Stop resets it.
-Surprise me replaces the selected loop with one of four varied, multicolor presets.
+The Drawing menu holds Surprise me, three scenes, and four geometric presets.
+Surprise me chooses from the same menu and replaces the selected loop.
 It leaves other pages intact, rejects changes at capacity, and records one Undo.
 Drawing presets add Mountains & cloud, Forest, and Sailboat as ordinary editable
 contours. Each replacement records one Undo and checks the shared stroke capacity.
-Dots mark the scan line’s crossings during hover and audio-clock playback; Pause
+Dots mark the scan line’s crossings during idle hover and audio-clock playback.
+The hover line and dots hide during drawing and erasing; Pause
 keeps the dots in place and Stop clears them.
 Grid editor projects the same vectors into time columns and scale-note rows without
-changing saved drawings or playback. New pointer marks snap to cells; a tap fills
-one time column, and brush erase cuts the selected cell. Free timing uses 32
+changing saved drawings or playback. New grid marks snap horizontally to time cells; a tap fills
+one time column, and brush erase cuts the selected cell. Pitch snapping is independent
+of view: Free leaves the pen unsnapped, Whole uses scale notes, Half uses semitones,
+and Quarter uses quarter tones. New strokes keep their chosen pitch resolution.
+Existing strokes retain their pitches when the snapping control changes. Free timing uses 32
 columns per eight beats; other timing settings follow their note divisions. The
 view preference is local browser state.
 
@@ -61,8 +66,12 @@ Project work uses `ws create --resume music-grid /home/eric/600_apps/music-canva
 
 Drawings are ephemeral browser state. Save song produces an editable version-3 JSON
 file managed by the user. Version-1 and version-2 files remain readable and retain
-their explicit instruments. Version 3 accepts an optional per-page stroke object
-number (1–64) to preserve gesture groups. Missing groups remain independent strokes;
+their explicit instruments. Version 3 accepts an optional per-stroke pitchStep (1 for semitones, 0.5 for quarter tones), and
+optional per-page stroke object number (1–64) to preserve gesture groups. Missing pitchStep retains the original scale-note mapping. Current readers preserve
+resolution in song files; legacy readers ignore it and play scale notes.
+MIDI uses separate pitch-bend channels for quarter tones. It rejects exports that
+need more than 15 non-drum instrument/tuning combinations; WAV has no MIDI channel
+restriction. Missing groups remain independent strokes;
 older readers can ignore the field while preserving the drawable contours and audio.
 No server database, hosted service, or external runtime
 asset is required. MIDI uses the compiled scale notes with instrument programs and
