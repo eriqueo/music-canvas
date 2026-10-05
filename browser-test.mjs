@@ -49,6 +49,7 @@ try{
   for(let i=0;i<100;i++){ready=await evaluate(`!!document.querySelector('#pens')?.children.length`);if(ready)break;await sleep(100);}
   assert.ok(ready,'App must load');
   assert.ok(await evaluate(`!!document.querySelector('#shape')&&!!document.querySelector('#symmetry')`),'Shape and mirror controls must be wired into the app');
+  assert.ok(await evaluate(`Array.from(document.querySelectorAll('[data-pen]')).every(b=>{const r=b.getBoundingClientRect();return r.x>=0&&r.right<=innerWidth&&r.width>=44;})`),'All nine instrument choices must be visible on mobile without horizontal scrolling');
   const tap=async selector=>{
     await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
     await sleep(200);
