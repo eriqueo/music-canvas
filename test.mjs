@@ -11,6 +11,28 @@ assert.ok(Math.abs(loop.duration-2.4)<1e-9);
 const curve={...line,points:[{x:.1,y:.8},{x:.3,y:.1},{x:.8,y:.7}]};
 assert.ok(loopEvents([curve],pitches,100,.4).events.length>3);
 assert.ok(Math.abs(loopEvents([curve],pitches,100,.4,96,4).duration-9.6)<1e-9);
+// A short diagonal must visit every pitch band, even inside one old timing cell.
+const diagonal={...line,points:[{x:.1,y:.9},{x:.12,y:.1}]};
+const arpeggio=loopEvents([diagonal],pitches,100,0,96);
+assert.deepEqual(arpeggio.events.map(e=>e.midi),pitches.slice(1,-1).map(n=>n.midi).reverse());
+assert.ok(arpeggio.events.every((e,i)=>!i||e.time>arpeggio.events[i-1].time));
+const dense={...diagonal,points:Array.from({length:101},(_,i)=>({x:.1+.02*i/100,y:.9-.8*i/100}))};
+const denseLoop=loopEvents([dense],pitches,100,0,96);
+assert.equal(denseLoop.events.length,arpeggio.events.length);
+for(let i=0;i<arpeggio.events.length;i++){
+  assert.equal(denseLoop.events[i].midi,arpeggio.events[i].midi);
+  assert.ok(Math.abs(denseLoop.events[i].time-arpeggio.events[i].time)<1e-9);
+  assert.ok(Math.abs(denseLoop.events[i].duration-arpeggio.events[i].duration)<1e-9);
+}
+assert.deepEqual(loopEvents([{...diagonal,points:[...diagonal.points].reverse()}],pitches,100,0,96).events,arpeggio.events);
+const freeHeld=loopEvents([line],pitches,100,0,96);
+assert.equal(freeHeld.events.length,1);
+assert.ok(Math.abs(freeHeld.events[0].time-.123*2.4)<1e-9);
+assert.ok(Math.abs(freeHeld.events[0].duration-(.789-.123)*2.4)<1e-9);
+const chord=loopEvents([line,{...line,points:line.points.map(p=>({...p,y:.2}))}],pitches,100,0,96);
+assert.equal(chord.events.length,2);
+assert.equal(chord.events[0].time,chord.events[1].time);
+assert.ok(arpeggio.events.every(e=>e.time>=0&&e.duration>0&&e.time+e.duration<=arpeggio.duration+1e-9));
 const pieces=eraseAt([line],{x:.5,y:.57},.05,.05);
 assert.equal(pieces.length,2); assert.ok(Math.abs(pieces[0].points.at(-1).x-.45)<1e-9); assert.ok(Math.abs(pieces[1].points[0].x-.55)<1e-9);
 const parsed=parseDrawing(JSON.parse(JSON.stringify({version:1,settings,strokes:[curve]})));

@@ -1,7 +1,7 @@
-import { LIMITS, KEYS, SCALES, SOUNDS, PENS, notesFor, pitchAt, loopEvents, eraseAt, parseDrawing, midiFile, wavFile } from './music.mjs';
+import { LIMITS, KEYS, SCALES, SOUNDS, INSTRUMENTS, PENS, FREE_TIMING, notesFor, pitchAt, loopEvents, eraseAt, parseDrawing, midiFile, wavFile } from './music.mjs';
 const $ = id => document.getElementById(id);
 const canvas = $('canvas'), paint = canvas.getContext('2d');
-const settings = { key:0, scale:'pentatonic', octave:3, range:2, bpm:100, swing:0, divisions:16, bars:1 };
+const settings = { key:0, scale:'pentatonic', octave:3, range:2, bpm:100, swing:0, divisions:FREE_TIMING, bars:1 };
 let strokes = [], undo = [], redo = [], pen = 'copper', sound = 'sine', tool = 'pen', guides = false, light = false;
 let active, pointerId, width = 1, height = 1, keyboard = { x:.1,y:.5 }, keyboardVisible = false;
 let context, master, voices = new Set(), running = false, playIntent = 0, timer, frame, cycleStart, eventIndex = 0, clickIndex = 0, click = false;
@@ -37,14 +37,20 @@ function syncSettings() { for (const [id,name] of [['key','key'],['scale','scale
 function selectTool(value) { tool = value; $('pen').setAttribute('aria-pressed',String(tool==='pen')); $('eraser').setAttribute('aria-pressed',String(tool==='erase')); $('paper-wrap').classList.toggle('erasing',tool==='erase'); }
 $('pen').onclick = () => selectTool('pen'); $('eraser').onclick = () => selectTool('erase');
 async function audio() {
+  // Media playback must remain audible when an iPhone's ringer is set to silent.
+  if(navigator.audioSession)navigator.audioSession.type='playback';
   if (!context) { const Audio = window.AudioContext || window.webkitAudioContext; if (!Audio) throw new Error('AUDIO_UNAVAILABLE'); context = new Audio(); master = context.createGain(); master.gain.value = Number($('volume').value)/100; master.connect(context.destination); }
   await context.resume(); if (context.state !== 'running') throw new Error('AUDIO_SUSPENDED'); return context;
 }
 function synth(ctx,destination,midi,when,duration,type,level=.06,track=false) {
   // At the live voice limit, stop the oldest voice before creating another.
   if (track && voices.size >= LIMITS.voices) { const oldest = voices.values().next().value; oldest.stop(); voices.delete(oldest); }
-  const oscillator = ctx.createOscillator(), envelope = ctx.createGain(); oscillator.type = type; oscillator.frequency.value = 440 * 2 ** ((midi-69)/12);
-  envelope.gain.setValueAtTime(0,when); envelope.gain.linearRampToValueAtTime(level,when+.008); envelope.gain.exponentialRampToValueAtTime(.001,when+duration+.08);
+  const oscillator = ctx.createOscillator(), envelope = ctx.createGain(), instrument=INSTRUMENTS[type]; oscillator.type = type; oscillator.frequency.value = 440 * 2 ** ((midi-69)/12);
+  // Upper partials keep lower notes present on small speakers; one oscillator per voice.
+  if(instrument.harmonics)oscillator.setPeriodicWave(ctx.createPeriodicWave(new Float32Array(instrument.harmonics.length),new Float32Array(instrument.harmonics)));
+  envelope.gain.setValueAtTime(0,when); envelope.gain.linearRampToValueAtTime(level,when+.008);
+  envelope.gain.linearRampToValueAtTime(level*instrument.sustain,when+Math.max(.008,duration));
+  envelope.gain.exponentialRampToValueAtTime(.001,when+duration+.08);
   oscillator.connect(envelope); envelope.connect(destination); oscillator.start(when); oscillator.stop(when+duration+.1);
   if (track) voices.add(oscillator);
   oscillator.onended = () => { voices.delete(oscillator); oscillator.disconnect(); envelope.disconnect(); };

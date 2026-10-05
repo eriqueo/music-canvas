@@ -6,7 +6,12 @@ export const SCALES = {
   pentatonic: { label: 'Pentatonic', intervals: [0, 2, 4, 7, 9] },
   dorian: { label: 'Dorian', intervals: [0, 2, 3, 5, 7, 9, 10] },
 };
-export const SOUNDS = { sine: 'Soft keys', triangle: 'Warm synth', square: '8-bit' };
+export const INSTRUMENTS = {
+  sine: { label:'Soft keys', harmonics:[0,1,.5,.25,.12,.06], sustain:.55 },
+  triangle: { label:'Warm synth', harmonics:[0,1,0,.3,0,.12,0,.05], sustain:.85 },
+  square: { label:'8-bit', harmonics:null, sustain:.8 },
+};
+export const SOUNDS = Object.fromEntries(Object.entries(INSTRUMENTS).map(([id,instrument])=>[id,instrument.label]));
 export const PENS = { copper: { label: 'Copper', token: '--color-copper' }, teal: { label: 'Teal', token: '--color-teal' }, gold: { label: 'Gold', token: '--color-gold' }, green: { label: 'Green', token: '--color-green' }, coral: { label: 'Coral', token: '--color-coral' } };
 export function notesFor(key, scale, octave, range = 2) {
   const intervals = SCALES[scale].intervals;
@@ -18,7 +23,47 @@ export function notesFor(key, scale, octave, range = 2) {
   });
 }
 export function pitchAt(y, notes) { return notes[Math.max(0, Math.min(notes.length - 1, Math.round(y * (notes.length - 1))))]; }
+export const FREE_TIMING = 96; // Version-1 drawings use 96 for the Free menu option.
+function freeEvents(strokes, notes, bpm, swing, bars) {
+  const duration=60/bpm*4*bars, count=FREE_TIMING*bars, pulse=duration/count;
+  const timeAt=x=>{const step=Math.min(count-1,Math.floor(x*count)),fraction=x*count-step;return Number((pulse*(step+(step%2?swing:0)+fraction*(step%2?1-swing:1+swing))).toFixed(12));};
+  const ranges=new Map();let pieces=0,limited=false;
+  const add=(midi,sound,x0,x1)=>{
+    const start=timeAt(x1>x0?x0:Math.min(x0,1-1/count)),end=x1>x0?timeAt(x1):Math.min(duration,start+pulse);
+    if(end<=start)return;
+    const key=`${sound}:${midi}`,list=ranges.get(key)||[],last=list.at(-1);
+    if(last&&start<=last.end+1e-9&&end>=last.start-1e-9){last.start=Math.min(last.start,start);last.end=Math.max(last.end,end);return;}
+    // Bound intermediate intervals too; at capacity shed later note pieces.
+    if(pieces>=LIMITS.events){limited=true;return;}
+    pieces++;list.push({midi,sound,start,end});ranges.set(key,list);
+  };
+  for(const stroke of strokes)for(let i=0;i<Math.max(1,stroke.points.length-1);i++){
+    let a=stroke.points[i],b=stroke.points[Math.min(i+1,stroke.points.length-1)];
+    if(a.x>b.x)[a,b]=[b,a];
+    const cuts=[0,1],dy=b.y-a.y;
+    if(dy)for(let row=0;row<notes.length-1;row++){
+      const fraction=((row+.5)/(notes.length-1)-a.y)/dy;
+      if(fraction>0&&fraction<1)cuts.push(fraction);
+    }
+    cuts.sort((a,b)=>a-b);
+    for(let j=1;j<cuts.length;j++){
+      const from=cuts[j-1],to=cuts[j],midi=pitchAt(a.y+dy*(from+to)/2,notes).midi;
+      add(midi,stroke.sound,a.x+(b.x-a.x)*from,a.x+(b.x-a.x)*to);
+    }
+  }
+  const events=[];
+  for(const list of ranges.values()){
+    list.sort((a,b)=>a.start-b.start);let held;
+    for(const interval of list){
+      if(held&&interval.start<=held.end+1e-9)held.end=Math.max(held.end,interval.end);
+      else{held={...interval};events.push(held);}
+    }
+  }
+  events.sort((a,b)=>a.start-b.start||a.midi-b.midi);
+  return {events:events.map(e=>({midi:e.midi,sound:e.sound,time:e.start,duration:Number((e.end-e.start).toFixed(12)),x:e.start/duration})),duration,ticks:Array.from({length:count},(_,i)=>({time:timeAt(i/count),x:i/count})),limited};
+}
 export function loopEvents(strokes, notes, bpm, swing, divisions = 16, bars = 1) {
+  if(divisions===FREE_TIMING)return freeEvents(strokes,notes,bpm,swing,bars);
   const count = divisions * bars;
   const bins = Array.from({ length: count }, () => new Map());
   for (const stroke of strokes) {
