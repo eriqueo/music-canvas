@@ -85,9 +85,8 @@ Install on current iPadOS: Safari → Share → Add to Home Screen → Open as W
 Open the installed app online, use Settings → Finish setup, and wait for Ready
 offline. Setup and updates need access to the HTTPS address; subsequent cached
 play does not need Wi-Fi or Tailscale. Settings → Load update first saves your
-work, requests activation on the idle page, then reloads. Close other Music Canvas
-windows first. The startup wait is bounded; if a browser keeps an update staged,
-close and reopen the app. Share prepares a file, then a
+work. If an update is waiting, close all Music Canvas windows and reopen to
+activate it. The worker stays staged while an app window is open. Share prepares a file, then a
 second tap opens the share sheet; Save file is the download fallback.
 
 Actual iPad speaker output, Apple Pencil/palm behavior, and offline export to Files

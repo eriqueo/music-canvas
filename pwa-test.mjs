@@ -12,3 +12,5 @@ for(const delay of [10,20,30]){const timer=timers.find(t=>t.ms===delay&&!t.cance
 assert.equal(requests,4,'initial request plus three bounded retries');assert.equal(timers.some(t=>t.ms===40),false);
 changed();assert.equal(await boundedResult,'reload-requested');assert.equal(reloads,1);assert.ok(timers.find(t=>t.ms===1000).canceled);
 console.log('PWA activation attempts stop at the bound and reload only once within startup.');
+
+const staged={...bounded,onControllerChange(){return ()=>{};},onTimeout(){return ()=>{};}};const count=requests;assert.equal(await prepareWaitingPwaUpdate(staged,1000,'same',[],false),'boot-current');assert.equal(requests,count,'Cold-restart policy never requests activation beneath a live window');

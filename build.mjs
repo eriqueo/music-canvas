@@ -30,9 +30,9 @@ self.addEventListener('message',event=>{
 await writeFile(output+'/index.html',html);
 await writeFile(output+'/boot.mjs',`import {prepareBrowserPwaUpdate} from './pwa-update.mjs';
 const id=new URL('release-${releaseId}',location.origin+${JSON.stringify(base)}).href;
-const prepare=()=>prepareBrowserPwaUpdate(${JSON.stringify(base)},1800,id,[150,250,400].map(ms=>ms+Math.floor(Math.random()*40)));
+const prepare=()=>prepareBrowserPwaUpdate(${JSON.stringify(base)},1800,id,[],false);
 // Explicit adult update runs on the idle page, after its save flush.
-export async function loadUpdate(){if(await prepare()!=='reload-requested')location.reload();}
+export async function loadUpdate(){const r=await navigator.serviceWorker?.getRegistration(${JSON.stringify(base)});if(r?.waiting)return 'restart-required';if(await prepare()!=='reload-requested')location.reload();}
 void (async()=>{
 const result=await prepare();
 if(result!=='reload-requested'){

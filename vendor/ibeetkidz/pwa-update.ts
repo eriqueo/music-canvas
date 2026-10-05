@@ -39,6 +39,7 @@ export async function prepareWaitingPwaUpdate(
   bootTimeoutMs: number,
   loadedReleaseId: string,
   activationDelaysMs: readonly number[] = [],
+  activateWaiting = true,
 ): Promise<PwaUpdateDisposition> {
   let stopTimeout: () => void = () => undefined;
   const deadline = new Promise<"timed-out">((resolve) => {
@@ -121,6 +122,12 @@ export async function prepareWaitingPwaUpdate(
       return "reload-requested";
     }
     stopControllerChange();
+    return "boot-current";
+  }
+
+  if (!activateWaiting) {
+    stopControllerChange();
+    stopTimeout();
     return "boot-current";
   }
 
@@ -226,9 +233,10 @@ export function prepareBrowserPwaUpdate(
   bootTimeoutMs: number,
   loadedReleaseId: string,
   activationDelaysMs: readonly number[] = [],
+  activateWaiting = true,
 ): Promise<PwaUpdateDisposition> {
   const port = createBrowserPwaUpdatePort(baseUrl);
   return port
-    ? prepareWaitingPwaUpdate(port, bootTimeoutMs, loadedReleaseId, activationDelaysMs)
+    ? prepareWaitingPwaUpdate(port, bootTimeoutMs, loadedReleaseId, activationDelaysMs, activateWaiting)
     : Promise.resolve("boot-current");
 }
