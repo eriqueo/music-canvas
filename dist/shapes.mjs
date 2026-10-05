@@ -69,3 +69,59 @@ export function eraseObjectAt(strokes,point,radiusX,radiusY){
   if(!hit)return strokes;
   return strokes.filter(s=>hit.object===undefined?s!==hit:s.object!==hit.object);
 }
+
+// Scene outlines use the same editable, grouped contours as shape gestures.
+export const SCENES={mountains:{label:'Mountains & cloud'},forest:{label:'Forest'},sailboat:{label:'Sailboat'}};
+export function sceneDrawing(scene,{width,height}){
+  const strokes=[];let object=0;
+  const path=(pen,coordinates)=>strokes.push({pen,object:++object,points:coordinates.map(([x,y])=>({x,y}))});
+  const shape=(pen,kind,a,b)=>{const id=++object;strokes.push(...shapePaths(kind,[{x:a[0],y:a[1]},{x:b[0],y:b[1]}],{width,height}).map(points=>({pen,object:id,points})));};
+  if(scene==='mountains'){
+    path('gold',[[.06,.78],[.21,.4],[.36,.78],[.51,.4],[.66,.78],[.81,.4],[.96,.78]]);
+    shape('blue','oval',[.7,.12],[.89,.28]);
+  }else if(scene==='forest'){
+    for(const [x,y,size] of [[.19,.3,.16],[.49,.19,.2],[.8,.34,.15]]){
+      shape('green','triangle',[x-size,y],[x+size,.75]);
+      path('copper',[[x,.75],[x,.9]]);
+    }
+    path('teal',[[.04,.91],[.25,.88],[.48,.93],[.7,.89],[.96,.92]]);
+    shape('gold','oval',[.76,.08],[.88,.22]);
+  }else if(scene==='sailboat'){
+    path('copper',[[.28,.7],[.38,.84],[.65,.84],[.76,.7],[.28,.7]]);
+    path('cream',[[.52,.7],[.52,.16],[.27,.62],[.52,.62],[.72,.62],[.52,.16]]);
+    for(const y of [.88,.95])path('blue',[[.06,y],[.2,y-.03],[.35,y],[.5,y-.03],[.65,y],[.8,y-.03],[.95,y]]);
+    shape('gold','oval',[.79,.1],[.91,.24]);
+  }else throw new Error('UNKNOWN_SCENE');
+  return strokes;
+}
+
+// A single geometry producer serves hover and audio-clock playback markers.
+export function crossingsAt(strokes,x){
+  const hits=[];
+  for(const stroke of strokes){
+    const seen=new Set();
+    const add=y=>{const key=y.toFixed(6);if(!seen.has(key)){seen.add(key);hits.push({x,y,pen:stroke.pen});}};
+    if(stroke.points.length===1){const p=stroke.points[0];if(Math.abs(p.x-x)<.003)add(p.y);}
+    for(let i=1;i<stroke.points.length;i++){
+      const a=stroke.points[i-1],b=stroke.points[i];
+      if(x<Math.min(a.x,b.x)||x>Math.max(a.x,b.x))continue;
+      if(a.x===b.x){add(a.y);add(b.y);}else add(a.y+(b.y-a.y)*(x-a.x)/(b.x-a.x));
+    }
+  }
+  return hits;
+}
+export function snapToGrid(p,columns,rows){
+  return {x:(Math.min(columns-1,Math.max(0,Math.floor(p.x*columns)))+.5)/columns,y:Math.min(rows-1,Math.max(0,Math.round(p.y*(rows-1))))/(rows-1)};
+}
+export function gridCells(strokes,columns,rows){
+  const cells=new Map();
+  for(const stroke of strokes)for(let i=0;i<stroke.points.length;i++){
+    const a=stroke.points[i],b=stroke.points[Math.min(i+1,stroke.points.length-1)];
+    const steps=Math.max(1,Math.ceil(Math.max(Math.abs(b.x-a.x)*columns,Math.abs(b.y-a.y)*(rows-1))*2));
+    for(let step=0;step<=steps;step++){
+      const p=snapToGrid({x:a.x+(b.x-a.x)*step/steps,y:a.y+(b.y-a.y)*step/steps},columns,rows);
+      cells.set(`${p.x}:${p.y}:${stroke.pen}`,{...p,pen:stroke.pen});
+    }
+  }
+  return [...cells.values()];
+}

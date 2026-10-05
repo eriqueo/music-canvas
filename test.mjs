@@ -144,3 +144,21 @@ const held={time:0,duration:3,midi:60,sound:'flute',path:[{time:0,midi:60,durati
 const resumed=remainingEvent(held,1.5);assert.equal(resumed.midi,64);assert.equal(resumed.duration,1.5);assert.deepEqual(resumed.path.map(n=>[n.time,n.midi]),[[0,64],[.5,67]]);
 assert.equal(remainingEvent(held,3),null);assert.equal(remainingEvent(held,0),null);
 console.log('Bounded random presets, object erasing, grouped file compatibility, brush identity and resumed pitch paths passed.');
+const {SCENES,sceneDrawing,crossingsAt,snapToGrid,gridCells}=await import('./dist/shapes.mjs');
+for(const scene of Object.keys(SCENES)){
+  const strokes=sceneDrawing(scene,aspect).map(s=>({...s,sound:PENS[s.pen].sound}));
+  assert.ok(strokes.length<=LIMITS.strokes);
+  assert.ok(strokes.every(s=>s.points.length<=LIMITS.points&&s.points.every(p=>p.x>=0&&p.x<=1&&p.y>=0&&p.y<=1)));
+  assert.deepEqual(parseDrawing({...saved,pages:[{strokes}],selectedPage:0}).pages[0].strokes,strokes);
+  assert.ok(compileLoop(strokes,songSettings).events.length>0);
+}
+assert.deepEqual(crossingsAt([{...line,points:[{x:.1,y:.2},{x:.5,y:.8},{x:.9,y:.2}]}],.5),[{x:.5,y:.8,pen:line.pen}],'Shared vertices produce one marker per contour');
+assert.equal(crossingsAt(grouped,.45).length,2,'Oval has two markers');
+assert.equal(crossingsAt(grouped,0).length,0);
+assert.deepEqual(snapToGrid({x:1,y:1},32,11),{x:31.5/32,y:1});
+assert.deepEqual(snapToGrid({x:0,y:0},32,11),{x:.5/32,y:0});
+const cells=gridCells([{...line,points:[{x:0,y:0},{x:1,y:1}]}],32,11);
+assert.ok(cells.every(p=>p.x>0&&p.x<1&&p.y>=0&&p.y<=1));
+assert.ok(new Set(cells.map(p=>p.y)).size===11,'Diagonal crosses every pitch row');
+assert.deepEqual(gridCells([],32,11),[]);
+console.log('Editable scene files and audio, contour crossings, edge snapping, and grid projection passed.');

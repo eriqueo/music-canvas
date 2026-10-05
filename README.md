@@ -17,6 +17,16 @@ bars around the canvas; short screens scroll inside the tool bars. Pause preserv
 the audio-clock position and remaining held-note pitch changes; Stop resets it.
 Surprise me replaces the selected loop with one of four varied, multicolor presets.
 It leaves other pages intact, rejects changes at capacity, and records one Undo.
+Drawing presets add Mountains & cloud, Forest, and Sailboat as ordinary editable
+contours. Each replacement records one Undo and checks the shared stroke capacity.
+Dots mark the scan line’s crossings during hover and audio-clock playback; Pause
+keeps the dots in place and Stop clears them.
+Grid editor projects the same vectors into time columns and scale-note rows without
+changing saved drawings or playback. New pointer marks snap to cells; a tap fills
+one time column, and brush erase cuts the selected cell. Free timing uses 32
+columns per eight beats; other timing settings follow their note divisions. The
+view preference is local browser state.
+
 Brush erase cuts lines. Object erase selects the nearest contour once per tap and
 removes its full gesture, including mirrored copies. Old ungrouped lines erase alone.
 

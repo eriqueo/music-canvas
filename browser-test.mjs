@@ -195,6 +195,36 @@ try{
   await evaluate('probe.notes=[]');await tap('#play');await sleep(150);assert.ok((await evaluate('probe.notes')).length>0,'Resume must restart the held voice');
   assert.ok(parseFloat(await evaluate('document.querySelector("#progress").style.width'))>parseFloat(held),'Resume must advance from the held position');
   await tap('#stop');assert.equal(await evaluate('document.querySelector("#progress").style.width'),'0%');
+  await open(emptySong);await control('#shape','pen');
+  for(const scene of ['mountains','forest','sailboat']){
+    const before=await save();await control('#scene',scene);const picture=await save();
+    assert.ok(picture.pages[0].strokes.length>=3,'Scene control must produce editable outlines');
+    await tap('#undo');assert.deepEqual((await save()).pages,before.pages,'Scene replacement must undo as one edit');
+    await tap('#redo');assert.deepEqual((await save()).pages,picture.pages);
+  }
+  await control('#scene','mountains');const mountains=await save();
+  await control('#drawing-view','grid');assert.deepEqual((await save()).pages,mountains.pages,'Grid view must not rewrite saved vectors');
+  await control('#drawing-view','drawing');assert.deepEqual((await save()).pages,mountains.pages);
+  const rect=await evaluate(`(()=>{const r=document.querySelector('#canvas').getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height};})()`);
+  await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:rect.x+rect.w*.8,y:rect.y+rect.h*.5});
+  assert.ok(await evaluate(`document.querySelectorAll('#crossings .crossing').length>=3`),'Hover dots must show the mountain and both cloud contours');
+  await tap('#play');await sleep(700);
+  assert.ok(await evaluate(`document.querySelectorAll('#crossings .crossing').length>0`),'Playback must update crossing dots');
+  await tap('#pause');const markerPosition=await evaluate(`document.querySelector('#crossings').innerHTML`);await sleep(150);
+  assert.equal(await evaluate(`document.querySelector('#crossings').innerHTML`),markerPosition,'Pause must freeze crossing dots');
+  await tap('#stop');assert.equal(await evaluate(`document.querySelectorAll('#crossings .crossing').length`),0,'Stop clears playback dots');
+  await open(emptySong);await control('#drawing-view','grid');await draw([{x:.303,y:.437}]);
+  const gridDrawing=await save(),stroke=gridDrawing.pages[0].strokes[0];
+  assert.equal(stroke.points.length,2,'A grid tap must draw one cell with its full time width');
+  assert.ok(Math.abs(stroke.points[1].x-stroke.points[0].x-1/32)<1e-9);
+  assert.ok(stroke.points.every(p=>Math.abs(p.y*10-Math.round(p.y*10))<1e-9),'Grid marks snap to scale notes');
+  await control('#drawing-view','drawing');assert.deepEqual((await save()).pages,gridDrawing.pages);
+  await tap('#undo');assert.equal((await save()).pages[0].strokes.length,0);
+  await tap('#redo');await control('#drawing-view','grid');await control('#erase-mode','brush');await draw([{x:.303,y:.437}],false);
+  assert.equal((await save()).pages[0].strokes.length,0,'Grid erase removes the tapped cell');
+  await tap('#undo');assert.deepEqual((await save()).pages,gridDrawing.pages);
+  await control('#drawing-view','drawing');
+  console.log('Scene selection and Undo, hover and playback dots, frozen Pause markers, lossless view changes, snapped grid taps and grid erase passed.');
   console.log('Viewport bars, random drawings and Undo, saved object erase, brush erase, Pause/resume and Stop passed.');
   console.log('Touch shapes and preview, two-voice oval playback, round circles, shape Undo/Redo, mirrors, resize, save/open, capacity, and cancel passed.');
 }finally{

@@ -1,6 +1,6 @@
 import { LIMITS, KEYS, SCALES, INSTRUMENTS, PENS, LAYERS, DRUMS, DRAWING_VERSION, PULSES_PER_LOOP, FREE_TIMING, notesFor, pitchAt, compileLoop, compileSong, audioTimeline, remainingEvent, eraseAt, parseDrawing, midiFile, wavFile } from './music.mjs';
 const $ = id => document.getElementById(id);
-import {SHAPES,SYMMETRIES,shapePaths,mirrorStrokes,randomDrawing,eraseObjectAt} from './shapes.mjs';
+import {SHAPES,SYMMETRIES,shapePaths,mirrorStrokes,randomDrawing,eraseObjectAt,SCENES,sceneDrawing,crossingsAt,snapToGrid,gridCells} from './shapes.mjs';
 const NOISE_SEED=0x31415926;
 const canvas = $('canvas'), paint = canvas.getContext('2d');
 const settings = { key:0, scale:'pentatonic', octave:3, range:2, bpm:120, swing:0, divisions:FREE_TIMING, bars:1, parts:Object.fromEntries(Object.keys(LAYERS).map(id=>[id,false])) };
@@ -9,7 +9,17 @@ const page={get strokes(){return project.pages[project.index].strokes;},set stro
 let undo = [], redo = [], pen = 'teal', sound = PENS[pen].sound, tool = 'pen', symmetry='off', guides = false, light = false;
 let active, pointerId, width = 1, height = 1, keyboard = { x:.1,y:.5 }, keyboardVisible = false;
 let context, master, noise, voices = new Set(), running = false, playIntent = 0, timer, frame, cycleStart, eventIndex = 0, clickIndex = 0, click = false;
-let visualCycles = [], activeLoop, paused;
+let visualCycles = [], activeLoop, paused, scanX, hoverX;
+let grid=false;
+try{grid=localStorage.getItem("music-canvas:grid")==="true";}catch{}
+const gridColumns=()=> (settings.divisions===FREE_TIMING?32:settings.divisions*PULSES_PER_LOOP/4)*settings.bars;
+const snap=p=>grid?snapToGrid(p,gridColumns(),pitches().length):p;
+function markers(){
+  const x=scanX??hoverX;
+  const hits=x===undefined?[]:crossingsAt(page.strokes,x);
+  $("crossings").replaceChildren(...hits.map(p=>{const dot=document.createElement("span");dot.className="crossing";dot.style.left=`${p.x*100}%`;dot.style.top=`${p.y*100}%`;return dot;}));
+  if(!running&&!paused){$("playhead").style.display=x===undefined?"none":"block";if(x!==undefined)$("playhead").style.left=`${x*100}%`;}
+}
 const clockLabel=seconds=>`${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')}`;
 function playerPosition(position,loop=pendingLoop){$('elapsed').textContent=clockLabel(position);$('duration').textContent=clockLabel(loop.duration);$('progress').style.width=`${Math.min(100,position/loop.duration*100)}%`;}
 function nextObject(){const used=new Set(page.strokes.map(s=>s.object));for(let id=1;id<=LIMITS.strokes;id++)if(!used.has(id))return id;}
@@ -37,15 +47,20 @@ function renderPages(){
 }
 function draftStrokes(){
   if(!active)return [];
-  return mirrorStrokes(shapePaths(tool,active.points,{width,height}).map(points=>({pen:active.pen,sound:active.sound,object:active.object,points})),symmetry);
+  const points=grid&&tool==='pen'&&active.points.length===1?[{x:active.points[0].x-.5/gridColumns(),y:active.points[0].y},{x:active.points[0].x+.5/gridColumns(),y:active.points[0].y}]:active.points;
+  return mirrorStrokes(shapePaths(tool,points,{width,height}).map(points=>({pen:active.pen,sound:active.sound,object:active.object,points})),symmetry);
 }
 function gestureSize(kind=tool){return (SHAPES[kind]?.strokes||0)*SYMMETRIES[symmetry].copies;}
 function redraw() {
   paint.clearRect(0,0,width,height);
-  if (guides) {
+  if (guides || grid) {
     const notes = pitches(); paint.font = '12px monospace'; paint.fillStyle = light ? colors.copper : getComputedStyle(document.documentElement).getPropertyValue('--text-muted');
     paint.strokeStyle = colors.copper; paint.lineWidth = 1;
-    notes.forEach((n,i) => { const y = i / (notes.length - 1) * height; paint.globalAlpha = .12; paint.beginPath(); paint.moveTo(0,y); paint.lineTo(width,y); paint.stroke(); paint.globalAlpha = .65; paint.fillText(`${n.label}${n.octave}`,8,Math.max(14,Math.min(height-5,y-5))); });
+    notes.forEach((n,i) => { const y = (i + (grid ? .5 : 0)) / (notes.length - 1) * height; paint.globalAlpha = .12; paint.beginPath(); paint.moveTo(0,y); paint.lineTo(width,y); paint.stroke(); paint.globalAlpha = .65; paint.fillText(`${n.label}${n.octave}`,8,Math.max(14,Math.min(height-5,y-5))); });
+  }
+  if(grid){
+    paint.strokeStyle=colors.copper;paint.globalAlpha=.15;paint.lineWidth=1;
+    for(let col=0;col<=gridColumns();col++){const x=col/gridColumns()*width;paint.beginPath();paint.moveTo(x,0);paint.lineTo(x,height);paint.stroke();}
   }
   paint.globalAlpha = 1; paint.lineWidth = 4; paint.lineCap = 'round'; paint.lineJoin = 'round';
   if(symmetry!=='off'){
@@ -58,12 +73,17 @@ function redraw() {
     const layer=LAYERS[e.layer];paint.fillStyle=getComputedStyle(document.documentElement).getPropertyValue(layer.token).trim();
     paint.beginPath();paint.arc(e.x*width,height-12-Object.keys(LAYERS).indexOf(e.layer)*10,3,0,Math.PI*2);paint.fill();
   }
-  paintStrokes(paint,[...page.strokes,...draftStrokes()],width,height,4);
+  const strokes=[...page.strokes,...draftStrokes()];
+  if(grid){
+    const columns=gridColumns(),rows=pitches().length,cw=width/columns,ch=height/(rows-1);
+    for(const cell of gridCells(strokes,columns,rows)){paint.fillStyle=colors[cell.pen];paint.fillRect(cell.x*width-cw/2+1,cell.y*height-ch/2+1,Math.max(1,cw-2),Math.max(1,ch-2));}
+  }else paintStrokes(paint,strokes,width,height,4);
+  markers();
   if (keyboardVisible) { paint.strokeStyle = colors.copper; paint.lineWidth = 1; paint.beginPath(); paint.arc(keyboard.x*width,keyboard.y*height,9,0,Math.PI*2); paint.stroke(); }
 }
 new ResizeObserver(() => { const r = canvas.getBoundingClientRect(), ratio = Math.min(window.devicePixelRatio || 1,3); width = r.width; height = r.height; canvas.width = Math.round(width*ratio); canvas.height = Math.round(height*ratio); paint.setTransform(ratio,0,0,ratio,0,0); redraw(); }).observe(canvas);
 for (const [id,options] of [['key',KEYS.map((n,i)=>[i,n])],['scale',Object.entries(SCALES).map(([id,s])=>[id,s.label])]]) for (const [value,label] of options) { const option = document.createElement('option'); option.value = value; option.textContent = label; $(id).append(option); }
-for(const [id,choices] of [['shape',SHAPES],['symmetry',SYMMETRIES]])for(const [value,{label}] of Object.entries(choices)){const option=document.createElement('option');option.value=value;option.textContent=label;$(id).append(option);}
+for(const [id,choices] of [['scene',SCENES],['shape',SHAPES],['symmetry',SYMMETRIES]])for(const [value,{label}] of Object.entries(choices)){const option=document.createElement('option');option.value=value;option.textContent=label;$(id).append(option);}
 for (const [name,p] of Object.entries(PENS)) { const b = document.createElement('button'); b.setAttribute('aria-label',`${p.label} pen`); b.title = p.label; b.dataset.pen = name; b.style.setProperty('--pen-color',`var(${p.token})`); b.setAttribute('aria-pressed',String(name===pen)); b.onclick = () => { finish();pen = name;sound=p.sound;$('instrument-name').textContent=p.label;previewMidi=null;if(tool==='erase')selectTool('pen'); for (const item of $('pens').children) item.setAttribute('aria-pressed',String(item.dataset.pen===pen)); }; $('pens').append(b); }
 for(const [id,layer] of Object.entries(LAYERS)){
   const b=document.createElement('button');b.id=`part-${id}`;b.className='part';b.setAttribute('aria-label',layer.label);b.setAttribute('aria-pressed','false');
@@ -76,6 +96,15 @@ $('pen').onclick = () => selectTool('pen'); $('eraser').onclick = () => selectTo
 $('shape').onchange=()=>selectTool($('shape').value);
 $('erase-mode').onchange=()=>selectTool('erase');
 $('random').onclick=()=>{finish();const strokes=randomDrawing({variant:Math.floor(Math.random()*4),shift:(Math.random()-.5)*.12,width,height}).map(s=>({...s,sound:PENS[s.pen].sound}));if(strokeCount()-page.strokes.length+strokes.length>LIMITS.strokes){status('Not enough room. Remove another loop first.');return;}stop();remember();page.strokes=strokes;changed();status('A new musical drawing. Undo restores your previous loop.');};
+$('scene').onchange=()=>{
+  const selected=$('scene').value;if(!selected)return;finish();
+  const strokes=sceneDrawing(selected,{width,height}).map(s=>({...s,sound:PENS[s.pen].sound}));
+  $('scene').value='';
+  if(strokeCount()-page.strokes.length+strokes.length>LIMITS.strokes){status('Not enough room. Remove another loop first.');return;}
+  stop();remember();page.strokes=strokes;changed();status(`${SCENES[selected].label}. Undo restores your previous drawing.`);
+};
+$('drawing-view').value=grid?'grid':'drawing';
+$('drawing-view').onchange=()=>{finish();grid=$('drawing-view').value==='grid';try{localStorage.setItem('music-canvas:grid',String(grid));}catch{}redraw();status(grid?'Grid editor: marks snap to time columns and scale notes.':'Drawing view.');};
 $('symmetry').onchange=()=>{finish();symmetry=$('symmetry').value;redraw();};
 async function audio() {
   // Media playback must remain audible when an iPhone's ringer is set to silent.
@@ -117,8 +146,8 @@ function renderEvent(ctx,destination,e,when,track,buffer){
 }
 let previewMidi = null, previewTime = -Infinity;
 function preview(p) { const note = pitchAt(p.y,pitches()); $('pitch').textContent = `${note.label}${note.octave}`; if (!context || context.state !== 'running' || running) return; const now = context.currentTime; if (note.midi===previewMidi && now-previewTime<.14 || now-previewTime<.045) return; previewMidi=note.midi; previewTime=now; synth(context,master,note.midi,now,.09,sound,.07,true); }
-function point(event) { const r = canvas.getBoundingClientRect(); return { x:Math.max(0,Math.min(1,(event.clientX-r.left)/r.width)), y:Math.max(0,Math.min(1,(event.clientY-r.top)/r.height)) }; }
-function erase(p){return $('erase-mode').value==='object'?eraseObjectAt(page.strokes,p,14/width,14/height):eraseAt(page.strokes,p,14/width,14/height,LIMITS.strokes-strokeCount()+page.strokes.length);}
+function point(event) { const r = canvas.getBoundingClientRect(); return snap({ x:Math.max(0,Math.min(1,(event.clientX-r.left)/r.width)), y:Math.max(0,Math.min(1,(event.clientY-r.top)/r.height)) }); }
+function erase(p){const rx=grid ? .51/gridColumns() : 14/width,ry=grid ? .51/(pitches().length-1) : 14/height;return $('erase-mode').value==='object'?eraseObjectAt(page.strokes,p,rx,ry):eraseAt(page.strokes,p,rx,ry,LIMITS.strokes-strokeCount()+page.strokes.length);}
 function drawPoint(p) {
   // Whole-object erase selects once on pointerdown, so a tap cannot delete
   // another overlapping object again on pointerup. Brush follows the pointer.
@@ -136,7 +165,8 @@ canvas.addEventListener('pointerdown',event => {
   if (tool!=='erase') active={pen,sound,object:nextObject(),points:[p]}; else page.strokes=erase(p);
   $('empty').hidden=true; status(''); audio().then(()=>preview(p)).catch(()=>status('Drawing works, but sound could not start. Try Play and check your browser audio.')); redraw();
 });
-canvas.addEventListener('pointermove',event => { if (pointerId!==event.pointerId) return; event.preventDefault(); const samples=event.getCoalescedEvents?.() || []; for (const e of samples.length?samples:[event]) drawPoint(point(e)); });
+canvas.addEventListener('pointermove',event => { if (pointerId!==event.pointerId) {hoverX=point(event).x;markers();return;} event.preventDefault(); const samples=event.getCoalescedEvents?.() || []; for (const e of samples.length?samples:[event]) drawPoint(point(e)); });
+canvas.addEventListener('pointerleave',()=>{hoverX=undefined;markers();});
 canvas.addEventListener('pointerup',event => { if (event.pointerId===pointerId) { drawPoint(point(event)); finish(); } });
 function cancelDrawing(){if(tool!=='pen'&&tool!=='erase')active=undefined;finish();}
 canvas.addEventListener('pointercancel',cancelDrawing); canvas.addEventListener('lostpointercapture',cancelDrawing);
@@ -153,13 +183,13 @@ $('guides').onclick=()=>{guides=!guides;$('guides').setAttribute('aria-pressed',
 $('paper').onclick=()=>{light=!light;$('paper-wrap').classList.toggle('light',light);$('paper').setAttribute('aria-pressed',String(light));$('paper').title=light?'Dark paper':'Light paper';$('paper').setAttribute('aria-label',$('paper').title);redraw();};
 canvas.addEventListener('keydown',event=>{
   const moves={ArrowRight:[.01,0],ArrowLeft:[-.01,0],ArrowUp:[0,-.01],ArrowDown:[0,.01]};
-  if(moves[event.key]) { event.preventDefault(); keyboardVisible=true; const old={...keyboard},[dx,dy]=moves[event.key]; keyboard={x:Math.max(0,Math.min(1,old.x+dx)),y:Math.max(0,Math.min(1,old.y+dy))};
+  if(moves[event.key]) { event.preventDefault(); keyboardVisible=true; const old={...keyboard},[dx,dy]=moves[event.key]; keyboard=snap({x:Math.max(0,Math.min(1,old.x+(grid?Math.sign(dx)/gridColumns():dx))),y:Math.max(0,Math.min(1,old.y+(grid?Math.sign(dy)/(pitches().length-1):dy)))});
     if(event.shiftKey && strokeCount()+gestureSize('pen')<=LIMITS.strokes) { remember();page.strokes=[...page.strokes,...mirrorStrokes([{pen,sound,object:nextObject(),points:[old,{...keyboard}]}],symmetry)];changed();audio().then(()=>preview(keyboard)).catch(()=>status('Sound could not start.')); } else redraw();
   } else if(event.key==='Enter' && strokeCount()+gestureSize('pen')<=LIMITS.strokes) {event.preventDefault();remember();page.strokes=[...page.strokes,...mirrorStrokes([{pen,sound,object:nextObject(),points:[{...keyboard}]}],symmetry)];changed();audio().then(()=>preview(keyboard)).catch(()=>status('Sound could not start.'));}
 });
 canvas.addEventListener('blur',()=>{keyboardVisible=false;redraw();});
-function stop() { playIntent++; running=false;clearInterval(timer);cancelAnimationFrame(frame);visualCycles=[];for(const voice of voices){try{voice.stop();}catch{}}voices.clear();paused=undefined;$('pause').disabled=true;playerPosition(0);$('play').textContent='▶';$('play').setAttribute('aria-pressed','false');$('playhead').style.display='none'; }
-function pause(){if(!running)return;const now=context.currentTime;const cycle=[...visualCycles].reverse().find(c=>c.start<=now)||visualCycles[0];const saved={loop:cycle.loop,position:Math.max(0,Math.min(cycle.loop.duration,now-cycle.start))};stop();paused=saved;playerPosition(saved.position,saved.loop);$('playhead').style.display='block';status('Paused. Play resumes; Stop returns to the start.');}
+function stop() { playIntent++; running=false;clearInterval(timer);cancelAnimationFrame(frame);visualCycles=[];for(const voice of voices){try{voice.stop();}catch{}}voices.clear();paused=undefined;$('pause').disabled=true;playerPosition(0);$('play').textContent='▶';$('play').setAttribute('aria-pressed','false');$('playhead').style.display='none';scanX=undefined;hoverX=undefined;markers(); }
+function pause(){if(!running)return;const savedScan=scanX;const now=context.currentTime;const cycle=[...visualCycles].reverse().find(c=>c.start<=now)||visualCycles[0];const saved={loop:cycle.loop,position:Math.max(0,Math.min(cycle.loop.duration,now-cycle.start))};stop();paused=saved;scanX=savedScan;markers();playerPosition(saved.position,saved.loop);$('playhead').style.display='block';status('Paused. Play resumes; Stop returns to the start.');}
 function schedule() {
   if(!running)return;
   const now=context.currentTime,horizon=now+.1;
@@ -181,7 +211,7 @@ function schedule() {
     visualCycles.push({start:cycleStart,loop:activeLoop});if(visualCycles.length>2)visualCycles.shift();
   }
 }
-function animate() {if(!running)return;const now=context.currentTime;while(visualCycles.length>1 && visualCycles[1].start<=now)visualCycles.shift();const cycle=visualCycles[0],position=Math.max(0,now-cycle.start);const cue=[...cycle.loop.cues].reverse().find(c=>c.start<=position)||cycle.loop.cues[0];if(project.index!==cue.index){finish();project.index=cue.index;changed();}playerPosition(position,cycle.loop);const fraction=Math.max(0,Math.min(1,(position-cue.start)/cue.duration));$('playhead').style.left=`${fraction*100}%`;frame=requestAnimationFrame(animate);}
+function animate() {if(!running)return;const now=context.currentTime;while(visualCycles.length>1 && visualCycles[1].start<=now)visualCycles.shift();const cycle=visualCycles[0],position=Math.max(0,now-cycle.start);const cue=[...cycle.loop.cues].reverse().find(c=>c.start<=position)||cycle.loop.cues[0];if(project.index!==cue.index){finish();project.index=cue.index;changed();}playerPosition(position,cycle.loop);const fraction=Math.max(0,Math.min(1,(position-cue.start)/cue.duration));$('playhead').style.left=`${fraction*100}%`;scanX=fraction;markers();frame=requestAnimationFrame(animate);}
 async function start() { const intent=++playIntent; try{await audio();if(intent!==playIntent || document.hidden)return;finish();const saved=paused;paused=undefined;running=true;activeLoop=saved?.loop??pendingLoop;const position=saved?.position??0;cycleStart=context.currentTime+.04-position;eventIndex=activeLoop.audioEvents.findIndex(e=>e.time>=position);if(eventIndex<0)eventIndex=activeLoop.audioEvents.length;clickIndex=Math.ceil(position*activeLoop.bpm/60);if(position>0)for(const e of activeLoop.audioEvents){const remaining=remainingEvent(e,position);if(remaining)renderEvent(context,master,remaining,context.currentTime+.04,true,noise);}visualCycles=[{start:cycleStart,loop:activeLoop}];$('pause').disabled=false;$('play').textContent='▶';$('play').setAttribute('aria-pressed','true');$('playhead').style.display='block';status('');schedule();timer=setInterval(schedule,25);animate();}catch{status('Sound could not start. Check your browser audio settings and try Play again.');} }
 $('play').onclick=()=>running?pause():start();
 $('pause').onclick=pause;$('stop').onclick=stop;
