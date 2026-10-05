@@ -1,5 +1,12 @@
 # Music Canvas
 
+Play publicly at https://eriqueo.github.io/music-canvas/. GitHub Actions builds and tests
+main, then publishes the Pages artifact. No Tailscale is needed for this address.
+Build it locally with `node build.mjs dist pages-release /music-canvas/`.
+The hosting base sets routes, manifest URLs and service-worker scope together.
+Songs belong to their hosting origin; use Backup/Restore to move them from the
+self-hosted app to the public app.
+
 Self-hosted drawing instrument on hwc-work. Canvas strokes keep normalized coordinates;
 horizontal position sets time and vertical position selects a pitch in the current scale.
 Completed strokes are immutable and keep their pen color and selected sound.

@@ -1,3 +1,5 @@
+import {routesFor} from './routes.mjs';
+const ROUTES=routesFor(new URL(document.baseURI).pathname);
 import {createIndexedDbStore,createSaveCoordinator,LIBRARY_LIMITS} from './library.mjs';
 import {buttonFace} from './ui.mjs';
 const $=id=>document.getElementById(id);
@@ -10,7 +12,7 @@ export async function setupLibrary({capture,apply,thumbnail,finish,stop,status,p
   const edit=()=>{if(!ready)return;saver.schedule({...current,updated:Date.now(),drawing:structuredClone(capture()),thumbnail:thumbnail()});};
   const flush=async()=>{finish();await saver.flush();};
   const trouble=e=>{status(messages[e.code]||'Could not open this song. Your current drawing is still here.');$('library-message').textContent=messages[e.code]||'Could not open the library.';};
-  async function openSong(id){await flush();const saved=await store.get(id);if(!saved)throw new Error('missing');ready=false;stop();apply(saved.drawing);current={id:saved.id,title:saved.title,revision:saved.revision};ready=true;rememberLast(id);$('save-state').textContent=messages.saved;route('/draw');}
+  async function openSong(id){await flush();const saved=await store.get(id);if(!saved)throw new Error('missing');ready=false;stop();apply(saved.drawing);current={id:saved.id,title:saved.title,revision:saved.revision};ready=true;rememberLast(id);$('save-state').textContent=messages.saved;route(ROUTES.draw);}
   async function list(){
     const metas=await store.list();$('song-name').value=current.title;$('song-list').replaceChildren();
     for(const meta of metas){
@@ -23,13 +25,13 @@ export async function setupLibrary({capture,apply,thumbnail,finish,stop,status,p
   }
   function route(path){
     if(path!==location.pathname)history.pushState({},'',path);
-    if(path==='/songs'){if(!$('songs-dialog').open)$('songs-dialog').showModal();list().catch(trouble);}else if($('songs-dialog').open)$('songs-dialog').close();
+    if(path===ROUTES.songs){if(!$('songs-dialog').open)$('songs-dialog').showModal();list().catch(trouble);}else if($('songs-dialog').open)$('songs-dialog').close();
   }
   window.addEventListener('popstate',()=>route(location.pathname));
-  $('my-songs').onclick=async()=>{try{await flush();}catch(e){trouble(e);}route('/songs');};
-  $('close-songs').onclick=()=>route('/draw');$('songs-dialog').addEventListener('cancel',event=>{event.preventDefault();route('/draw');});
+  $('my-songs').onclick=async()=>{try{await flush();}catch(e){trouble(e);}route(ROUTES.songs);};
+  $('close-songs').onclick=()=>route(ROUTES.draw);$('songs-dialog').addEventListener('cancel',event=>{event.preventDefault();route(ROUTES.draw);});
   $('adult').onclick=()=>$('adult-dialog').showModal();
-  async function fresh(copy=false){await flush();const drawing=copy?capture():null;current={id:crypto.randomUUID(),title:copy?`${current.title} copy`:'My song',revision:0};ready=false;stop();apply(drawing);ready=true;edit();await saver.flush();route('/draw');}
+  async function fresh(copy=false){await flush();const drawing=copy?capture():null;current={id:crypto.randomUUID(),title:copy?`${current.title} copy`:'My song',revision:0};ready=false;stop();apply(drawing);ready=true;edit();await saver.flush();route(ROUTES.draw);}
   $('new-song').onclick=()=>fresh().catch(trouble);$('duplicate-song').onclick=()=>fresh(true).catch(trouble);
   $('rename-song').onsubmit=async e=>{e.preventDefault();try{await flush();current.title=$('song-name').value.trim()||'My song';edit();await saver.flush();await list();}catch(err){trouble(err);}};
   $('confirm-delete').onclick=async()=>{try{if(deleteId===current.id)await flush();else finish();await store.remove(deleteId);$('delete-song-dialog').close();if(deleteId===current.id){ready=false;current={id:crypto.randomUUID(),title:'My song',revision:0};apply(null);ready=true;$('save-state').textContent='Draw to save a new song.';}await list();}catch(e){trouble(e);}};
@@ -48,6 +50,6 @@ export async function setupLibrary({capture,apply,thumbnail,finish,stop,status,p
   ready=true;
   // Last-open preference is separate from song revisions and playback state.
   const commit=edit;
-  route(location.pathname==='/songs'?'/songs':'/draw');
+  const initial=location.pathname.replace(/\/$/,'')===ROUTES.songs?ROUTES.songs:ROUTES.draw;history.replaceState({},'',initial);route(initial);
   return {commit,flush,beforeImport:async()=>{await flush();current={id:crypto.randomUUID(),title:'Opened song',revision:0};}};
 }
