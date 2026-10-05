@@ -54,18 +54,32 @@ try{
     await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:mobile?2:1,mobile});await sleep(120);
     const clipped=await evaluate(`Array.from(document.querySelectorAll('#root button,#root select')).filter(b=>{const r=b.getBoundingClientRect(),p=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return r.x<0||r.y<0||r.right>innerWidth+.5||r.bottom>innerHeight+.5||(!b.disabled&&p&&!b.contains(p));}).map(b=>b.id||b.dataset.pen)`);
     assert.deepEqual(clipped,[],`Controls must be visible and reachable at ${width}×${height}`);
-    assert.ok(await evaluate(`Array.from(document.querySelectorAll('#root button,#root select')).every(b=>{const r=b.getBoundingClientRect();return r.width>=43.9&&r.height>=43.9;})`),'Controls must retain 44-pixel touch targets');
+    assert.ok(await evaluate(`Array.from(document.querySelectorAll('#root button,#root select')).every(b=>{const r=b.getBoundingClientRect();return r.width>=47.9&&r.height>=47.9;})`),'Controls must retain 48-pixel touch targets');
     assert.ok(await evaluate('document.documentElement.scrollHeight<=innerHeight&&document.documentElement.scrollWidth<=innerWidth'),'Workspace must fit one screen');
     if(process.argv[3]&&[1832,390].includes(width)){const capture=await send('Page.captureScreenshot',{format:'png'});await writeFile(process.argv[3].replace(/\.png$/,`-${width}.png`),Buffer.from(capture.data,'base64'));}
   }
   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:2,mobile:true});
   const tap=async selector=>{
-    await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
+    await evaluate(`(()=>{const b=document.querySelector(${JSON.stringify(selector)}),d=b.closest("dialog");for(const other of document.querySelectorAll("dialog[open]"))if(other!==d)other.close();if(d&&!d.open)d.showModal();b.scrollIntoView({block:"center"});})()`);
     await sleep(200);
     const p=await evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
     await send('Input.dispatchMouseEvent',{type:'mousePressed',...p,button:'left',clickCount:1});
     await send('Input.dispatchMouseEvent',{type:'mouseReleased',...p,button:'left',clickCount:1});
   };
+  assert.ok(await evaluate(`Array.from(document.querySelectorAll('[data-picker]')).every(b=>b.querySelector('svg')&&b.querySelector('.button-label'))`),'Art controls must have icons and short labels');
+  assert.ok(await evaluate(`Array.from(document.querySelectorAll('[data-pen]')).every(b=>b.querySelector('svg')&&b.querySelector('.button-label'))`),'Every sound pen must have an instrument picture');
+  await tap('[data-picker="shape"]');assert.ok(await evaluate(`document.querySelector('#choice-dialog').open`));
+  assert.equal(await evaluate(`document.querySelectorAll('#choices button').length`),7);
+  await tap('[data-choice="triangle"]');assert.equal(await evaluate(`document.querySelector('#shape').value`),'triangle');
+  assert.ok(await evaluate(`!document.querySelector('#choice-dialog').open`));await tap('#pen');
+  await tap('[data-picker="scene"]');assert.equal(await evaluate(`document.querySelectorAll('#choices canvas').length`),7,'Drawing choices must show previews of the actual vectors');
+  if(process.argv[3]){const capture=await send('Page.captureScreenshot',{format:'png'});await writeFile(process.argv[3].replace(/\.png$/,'-pictures.png'),Buffer.from(capture.data,'base64'));}
+  await tap('[data-choice="forest"]');assert.ok(parseInt(await evaluate(`document.querySelector('#stroke-count').textContent`))>0);await tap('#undo');
+  await tap('[data-picker="snap"]');await tap('[data-choice="quarter"]');assert.equal(await evaluate(`document.querySelector('#snap').value`),'quarter');
+  await tap('[data-picker="snap"]');await tap('[data-choice="free"]');
+  await tap('#tune');assert.ok(await evaluate(`document.querySelector('#tune-dialog').open`));await tap('[data-close="tune-dialog"]');
+  await tap('#export');assert.ok(await evaluate(`document.querySelector('#export-dialog').open`));await tap('[data-close="export-dialog"]');
+  console.log('Picture tools, shape selection, scene previews, snap choices, labeled instrument icons, music settings and sharing dialogs passed.');
   // Trusted control input unlocks Chromium audio before touch drawing.
   await tap('#play');await sleep(150);await tap('#play');
   assert.deepEqual(await evaluate('probe.sessionAtStart'),['playback'],'iPhone playback category must be set before audio creation');

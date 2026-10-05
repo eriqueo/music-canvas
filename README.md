@@ -11,6 +11,12 @@ use the playback audio session so the silent switch does not mute the instrument
 Each loop has eight beats, matching the reference: 120 BPM gives four seconds.
 Independent dot buttons add bass, drums, and a scale-aware arpeggio.
 
+Kid Pix-inspired picture buttons open visual choices for scenes, shapes, mirrors,
+pitch snapping, views, and erasers. Scene tiles preview the actual editable vectors.
+The nine colored pens show instrument pictures and short names. Main controls have
+48-pixel or larger touch targets; Tune holds the detailed music settings and Share
+holds WAV and MIDI. Drawing, song files, and audio use the same controls underneath.
+
 The workspace fits one viewport: teal drawing tools on the left, gold music and
 song controls on the right, and a copper player below. Phone layouts stack compact
 bars around the canvas; short screens scroll inside the tool bars. Pause preserves
