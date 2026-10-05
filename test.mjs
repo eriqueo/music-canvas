@@ -104,3 +104,26 @@ const theme=readFileSync(new URL('./dist/theme.css',import.meta.url),'utf8'),sty
 const defined=new Set([...`${palette}\n${theme}\n${style}`.matchAll(/(--[\w-]+)\s*:/g)].map(m=>m[1]));defined.add('--pen-color'); // Set by the pen buttons at the composition root.
 for(const match of style.matchAll(/var\((--[\w-]+)/g))assert.ok(defined.has(match[1]),`${match[1]} must be defined`);
 console.log('Eight-beat tempo, ordered song pages, format migration, pitch glide, capacities, and MIDI channels passed.');
+const {shapePaths,mirrorStrokes,SHAPES,SYMMETRIES}=await import('./dist/shapes.mjs');
+const a={x:.2,y:.25},b={x:.7,y:.75},aspect={width:800,height:400};
+for(const id of Object.keys(SHAPES)){
+  const paths=shapePaths(id,[a,b],aspect);
+  assert.equal(paths.length,SHAPES[id].strokes);
+  assert.ok(paths.every(points=>points.length&&points.length<=LIMITS.points&&points.every(p=>p.x>=0&&p.x<=1&&p.y>=0&&p.y<=1)));
+  const reverse=shapePaths(id,[b,a],aspect);
+  if(id!=='pen')assert.deepEqual(reverse,paths,`${id} must ignore drag direction`);
+}
+const circle=shapePaths('circle',[a,b],aspect).flat();
+const extent=axis=>Math.max(...circle.map(p=>p[axis]))-Math.min(...circle.map(p=>p[axis]));
+assert.ok(Math.abs(extent('x')*800-extent('y')*400)<1e-8,'Circle must be round in pixel space');
+const oval=shapePaths('oval',[a,b],aspect);
+assert.equal(oval.length,2);assert.deepEqual(oval[0][0],oval[1][0]);assert.deepEqual(oval[0].at(-1),oval[1].at(-1));
+const upper=compileLoop([{...line,sound:'flute',points:oval[0]}],songSettings),lower=compileLoop([{...line,sound:'flute',points:oval[1]}],songSettings);
+assert.ok(Math.max(...upper.events.map(e=>e.midi))>Math.max(...lower.events.map(e=>e.midi)),'Both halves must have their own melody');
+for(const mode of Object.keys(SYMMETRIES))assert.equal(mirrorStrokes([diagonal],mode).length,SYMMETRIES[mode].copies);
+const mirrored=mirrorStrokes([diagonal],'both');
+assert.deepEqual(mirrored[1].points,diagonal.points.map(p=>({x:1-p.x,y:p.y})));
+assert.deepEqual(mirrored[2].points,diagonal.points.map(p=>({x:p.x,y:1-p.y})));
+assert.equal(mirrorStrokes([{...line,points:[{x:.3,y:.5},{x:.7,y:.5}]}],'both').length,1,'Axis-aligned duplicate voices must collapse');
+assert.deepEqual(parseDrawing({...saved,pages:[{strokes:mirrored}],selectedPage:0}).pages[0].strokes,mirrored);
+console.log('Shape contours, reverse drags, round circles, independent oval voices, mirrors, and unchanged saved format passed.');

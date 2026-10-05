@@ -1,11 +1,12 @@
 import { LIMITS, KEYS, SCALES, INSTRUMENTS, PENS, LAYERS, DRUMS, DRAWING_VERSION, PULSES_PER_LOOP, FREE_TIMING, notesFor, pitchAt, compileLoop, compileSong, audioTimeline, eraseAt, parseDrawing, midiFile, wavFile } from './music.mjs';
 const $ = id => document.getElementById(id);
+import {SHAPES,SYMMETRIES,shapePaths,mirrorStrokes} from './shapes.mjs';
 const NOISE_SEED=0x31415926;
 const canvas = $('canvas'), paint = canvas.getContext('2d');
 const settings = { key:0, scale:'pentatonic', octave:3, range:2, bpm:120, swing:0, divisions:FREE_TIMING, bars:1, parts:Object.fromEntries(Object.keys(LAYERS).map(id=>[id,false])) };
 let project={pages:[{strokes:[]}],index:0},songMode=false;
 const page={get strokes(){return project.pages[project.index].strokes;},set strokes(value){project.pages[project.index]={strokes:value};}};
-let undo = [], redo = [], pen = 'teal', sound = PENS[pen].sound, tool = 'pen', guides = false, light = false;
+let undo = [], redo = [], pen = 'teal', sound = PENS[pen].sound, tool = 'pen', symmetry='off', guides = false, light = false;
 let active, pointerId, width = 1, height = 1, keyboard = { x:.1,y:.5 }, keyboardVisible = false;
 let context, master, noise, voices = new Set(), running = false, playIntent = 0, timer, frame, cycleStart, eventIndex = 0, clickIndex = 0, click = false;
 let visualCycles = [], activeLoop;
@@ -31,6 +32,11 @@ function renderPages(){
   $('page-add').disabled=project.pages.length>=LIMITS.pages;$('page-copy').disabled=project.pages.length>=LIMITS.pages||strokeCount()+page.strokes.length>LIMITS.strokes;
   $('song').setAttribute('aria-pressed',String(songMode));$('play-scope').textContent=songMode?`Song · ${project.pages.length} loops`:`Loop ${project.index+1} · ${settings.bars*PULSES_PER_LOOP} beats`;
 }
+function draftStrokes(){
+  if(!active)return [];
+  return mirrorStrokes(shapePaths(tool,active.points,{width,height}).map(points=>({pen:active.pen,sound:active.sound,points})),symmetry);
+}
+function gestureSize(kind=tool){return (SHAPES[kind]?.strokes||0)*SYMMETRIES[symmetry].copies;}
 function redraw() {
   paint.clearRect(0,0,width,height);
   if (guides) {
@@ -39,24 +45,33 @@ function redraw() {
     notes.forEach((n,i) => { const y = i / (notes.length - 1) * height; paint.globalAlpha = .12; paint.beginPath(); paint.moveTo(0,y); paint.lineTo(width,y); paint.stroke(); paint.globalAlpha = .65; paint.fillText(`${n.label}${n.octave}`,8,Math.max(14,Math.min(height-5,y-5))); });
   }
   paint.globalAlpha = 1; paint.lineWidth = 4; paint.lineCap = 'round'; paint.lineJoin = 'round';
+  if(symmetry!=='off'){
+    paint.strokeStyle=colors.copper;paint.globalAlpha=.25;paint.lineWidth=1;paint.setLineDash([4,6]);paint.beginPath();
+    if(symmetry==='time'||symmetry==='both'){paint.moveTo(width/2,0);paint.lineTo(width/2,height);}
+    if(symmetry==='pitch'||symmetry==='both'){paint.moveTo(0,height/2);paint.lineTo(width,height/2);}
+    paint.stroke();paint.setLineDash([]);paint.globalAlpha=1;
+  }
   for(const e of pendingLoop.events)if(e.layer&&(!songMode||e.page===project.index)){
     const layer=LAYERS[e.layer];paint.fillStyle=getComputedStyle(document.documentElement).getPropertyValue(layer.token).trim();
     paint.beginPath();paint.arc(e.x*width,height-12-Object.keys(LAYERS).indexOf(e.layer)*10,3,0,Math.PI*2);paint.fill();
   }
-  paintStrokes(paint,[...page.strokes,...(active ? [active] : [])],width,height,4);
+  paintStrokes(paint,[...page.strokes,...draftStrokes()],width,height,4);
   if (keyboardVisible) { paint.strokeStyle = colors.copper; paint.lineWidth = 1; paint.beginPath(); paint.arc(keyboard.x*width,keyboard.y*height,9,0,Math.PI*2); paint.stroke(); }
 }
 new ResizeObserver(() => { const r = canvas.getBoundingClientRect(), ratio = Math.min(window.devicePixelRatio || 1,3); width = r.width; height = r.height; canvas.width = Math.round(width*ratio); canvas.height = Math.round(height*ratio); paint.setTransform(ratio,0,0,ratio,0,0); redraw(); }).observe(canvas);
 for (const [id,options] of [['key',KEYS.map((n,i)=>[i,n])],['scale',Object.entries(SCALES).map(([id,s])=>[id,s.label])]]) for (const [value,label] of options) { const option = document.createElement('option'); option.value = value; option.textContent = label; $(id).append(option); }
-for (const [name,p] of Object.entries(PENS)) { const b = document.createElement('button'); b.setAttribute('aria-label',`${p.label} pen`); b.title = p.label; b.dataset.pen = name; b.style.setProperty('--pen-color',`var(${p.token})`); b.setAttribute('aria-pressed',String(name===pen)); b.onclick = () => { finish();pen = name;sound=p.sound;$('instrument-name').textContent=p.label;previewMidi=null;selectTool('pen'); for (const item of $('pens').children) item.setAttribute('aria-pressed',String(item.dataset.pen===pen)); }; $('pens').append(b); }
+for(const [id,choices] of [['shape',SHAPES],['symmetry',SYMMETRIES]])for(const [value,{label}] of Object.entries(choices)){const option=document.createElement('option');option.value=value;option.textContent=label;$(id).append(option);}
+for (const [name,p] of Object.entries(PENS)) { const b = document.createElement('button'); b.setAttribute('aria-label',`${p.label} pen`); b.title = p.label; b.dataset.pen = name; b.style.setProperty('--pen-color',`var(${p.token})`); b.setAttribute('aria-pressed',String(name===pen)); b.onclick = () => { finish();pen = name;sound=p.sound;$('instrument-name').textContent=p.label;previewMidi=null;if(tool==='erase')selectTool('pen'); for (const item of $('pens').children) item.setAttribute('aria-pressed',String(item.dataset.pen===pen)); }; $('pens').append(b); }
 for(const [id,layer] of Object.entries(LAYERS)){
   const b=document.createElement('button');b.id=`part-${id}`;b.className='part';b.setAttribute('aria-label',layer.label);b.setAttribute('aria-pressed','false');
   const dots=document.createElement('span');dots.textContent=layer.dots;dots.setAttribute('aria-hidden','true');b.append(dots,` ${layer.label}`);
   b.onclick=()=>{finish();remember();settings.parts[id]=!settings.parts[id];b.setAttribute('aria-pressed',String(settings.parts[id]));changed();status(`${layer.label} ${settings.parts[id]?'on':'off'}.`);};$('parts').append(b);
 }
 function syncSettings() { for (const [id,name] of [['key','key'],['scale','scale'],['range','range'],['timing','divisions'],['swing','swing'],['bars','bars'],['tempo','bpm']]) $(id).value = settings[name]; $('octave').textContent = settings.octave; $('bpm').textContent = settings.bpm; $('octave-down').disabled = settings.octave <= 2; $('octave-up').disabled = settings.octave >= 5;for(const id of Object.keys(LAYERS))$(`part-${id}`).setAttribute('aria-pressed',String(settings.parts[id])); }
-function selectTool(value) { tool = value; $('pen').setAttribute('aria-pressed',String(tool==='pen')); $('eraser').setAttribute('aria-pressed',String(tool==='erase')); $('paper-wrap').classList.toggle('erasing',tool==='erase'); }
+function selectTool(value) { finish();tool = value; $('shape').value=tool==='erase'?'pen':tool;$('pen').setAttribute('aria-pressed',String(tool==='pen')); $('eraser').setAttribute('aria-pressed',String(tool==='erase')); $('paper-wrap').classList.toggle('erasing',tool==='erase'); }
 $('pen').onclick = () => selectTool('pen'); $('eraser').onclick = () => selectTool('erase');
+$('shape').onchange=()=>selectTool($('shape').value);
+$('symmetry').onchange=()=>{finish();symmetry=$('symmetry').value;redraw();};
 async function audio() {
   // Media playback must remain audible when an iPhone's ringer is set to silent.
   if(navigator.audioSession)navigator.audioSession.type='playback';
@@ -100,20 +115,23 @@ function preview(p) { const note = pitchAt(p.y,pitches()); $('pitch').textConten
 function point(event) { const r = canvas.getBoundingClientRect(); return { x:Math.max(0,Math.min(1,(event.clientX-r.left)/r.width)), y:Math.max(0,Math.min(1,(event.clientY-r.top)/r.height)) }; }
 function drawPoint(p) {
   if (tool==='erase') page.strokes = eraseAt(page.strokes,p,14/width,14/height,LIMITS.strokes-strokeCount()+page.strokes.length);
+  else if(active&&tool!=='pen'){active.points=[active.points[0],p];preview(p);}
   else if (active) { const last = active.points.at(-1); if (Math.hypot((p.x-last.x)*width,(p.y-last.y)*height)<1.5) return; if (active.points.length>=LIMITS.points) { status('Stroke limit reached. Lift your pen to start another line.'); return; } active.points.push(p); preview(p); }
   redraw();
 }
-function finish() { if (pointerId===undefined && !active) return; if (active) { page.strokes=[...page.strokes,active]; active=undefined; } pointerId=undefined; $('pitch').textContent=''; changed(); }
+function finish() { if (pointerId===undefined && !active) return; if (active) { page.strokes=[...page.strokes,...draftStrokes()]; active=undefined; } pointerId=undefined; $('pitch').textContent=''; changed(); }
 canvas.addEventListener('pointerdown',event => {
   if (pointerId!==undefined || event.button!==0) return;
-  if (tool==='pen' && strokeCount()>=LIMITS.strokes) { status('Drawing limit reached. Erase a line or clear a loop to keep drawing.'); return; }
+  // Reserve every contour and reflected copy; at capacity reject the entire gesture.
+  if (tool!=='erase' && strokeCount()+gestureSize()>LIMITS.strokes) { status('Not enough room for the whole shape. Erase a line or clear a loop.'); return; }
   event.preventDefault(); keyboardVisible=false; canvas.focus({preventScroll:true}); pointerId=event.pointerId; canvas.setPointerCapture(event.pointerId); remember(); const p=point(event);
-  if (tool==='pen') active={pen,sound,points:[p]}; else page.strokes=eraseAt(page.strokes,p,14/width,14/height,LIMITS.strokes-strokeCount()+page.strokes.length);
+  if (tool!=='erase') active={pen,sound,points:[p]}; else page.strokes=eraseAt(page.strokes,p,14/width,14/height,LIMITS.strokes-strokeCount()+page.strokes.length);
   $('empty').hidden=true; status(''); audio().then(()=>preview(p)).catch(()=>status('Drawing works, but sound could not start. Try Play and check your browser audio.')); redraw();
 });
 canvas.addEventListener('pointermove',event => { if (pointerId!==event.pointerId) return; event.preventDefault(); const samples=event.getCoalescedEvents?.() || []; for (const e of samples.length?samples:[event]) drawPoint(point(e)); });
 canvas.addEventListener('pointerup',event => { if (event.pointerId===pointerId) { drawPoint(point(event)); finish(); } });
-canvas.addEventListener('pointercancel',finish); canvas.addEventListener('lostpointercapture',finish);
+function cancelDrawing(){if(tool!=='pen'&&tool!=='erase')active=undefined;finish();}
+canvas.addEventListener('pointercancel',cancelDrawing); canvas.addEventListener('lostpointercapture',cancelDrawing);
 $('undo').onclick=()=>{finish();if(!undo.length)return;stop();redo.push(snapshot());restore(undo.pop());changed();status('Last edit undone.');};
 $('redo').onclick=()=>{finish();if(!redo.length)return;stop();undo.push(snapshot());restore(redo.pop());changed();status('Edit restored.');};
 $('clear').onclick=()=>{finish();if(!page.strokes.length)return;remember();page.strokes=[];changed();status('Loop cleared. Undo brings it back.');};
@@ -128,8 +146,8 @@ $('paper').onclick=()=>{light=!light;$('paper-wrap').classList.toggle('light',li
 canvas.addEventListener('keydown',event=>{
   const moves={ArrowRight:[.01,0],ArrowLeft:[-.01,0],ArrowUp:[0,-.01],ArrowDown:[0,.01]};
   if(moves[event.key]) { event.preventDefault(); keyboardVisible=true; const old={...keyboard},[dx,dy]=moves[event.key]; keyboard={x:Math.max(0,Math.min(1,old.x+dx)),y:Math.max(0,Math.min(1,old.y+dy))};
-    if(event.shiftKey && strokeCount()<LIMITS.strokes) { remember();page.strokes=[...page.strokes,{pen,sound,points:[old,{...keyboard}]}];changed();audio().then(()=>preview(keyboard)).catch(()=>status('Sound could not start.')); } else redraw();
-  } else if(event.key==='Enter' && strokeCount()<LIMITS.strokes) {event.preventDefault();remember();page.strokes=[...page.strokes,{pen,sound,points:[{...keyboard}]}];changed();audio().then(()=>preview(keyboard)).catch(()=>status('Sound could not start.'));}
+    if(event.shiftKey && strokeCount()+gestureSize('pen')<=LIMITS.strokes) { remember();page.strokes=[...page.strokes,...mirrorStrokes([{pen,sound,points:[old,{...keyboard}]}],symmetry)];changed();audio().then(()=>preview(keyboard)).catch(()=>status('Sound could not start.')); } else redraw();
+  } else if(event.key==='Enter' && strokeCount()+gestureSize('pen')<=LIMITS.strokes) {event.preventDefault();remember();page.strokes=[...page.strokes,...mirrorStrokes([{pen,sound,points:[{...keyboard}]}],symmetry)];changed();audio().then(()=>preview(keyboard)).catch(()=>status('Sound could not start.'));}
 });
 canvas.addEventListener('blur',()=>{keyboardVisible=false;redraw();});
 function stop() { playIntent++; running=false;clearInterval(timer);cancelAnimationFrame(frame);visualCycles=[];for(const voice of voices){try{voice.stop();}catch{}}voices.clear();$('play').textContent='▶ Play';$('play').setAttribute('aria-pressed','false');$('playhead').style.display='none'; }

@@ -11,6 +11,16 @@ use the playback audio session so the silent switch does not mute the instrument
 Each loop has eight beats, matching the reference: 120 BPM gives four seconds.
 Independent dot buttons add bass, drums, and a scale-aware arpeggio.
 
+Shape tools borrow Kid Pix's drag-preview interaction: Line, Circle, Oval,
+Rectangle, Triangle, and Diamond. Drag from one corner to the opposite corner;
+circles stay round in screen pixels. Outlines become ordinary stroke data.
+The upper and lower halves of an oval have separate voices, producing two melodies.
+Symmetry mirrors new gestures across the time axis, pitch axis, or both.
+Time mirror gives a phrase and its reverse; pitch mirror adds an inverted melody.
+Each full gesture is one Undo action. At capacity, the whole gesture is rejected.
+Canceling an unfinished shape discards its preview. Shapes retain their selected
+instrument and work with page thumbnails, song files, erasing, and audio exports.
+
 Add loop creates another drawing. Duplicate copies the selected loop. Arrow buttons
 move it in the sequence; Remove loop and drawing edits can be undone. Song mode plays
 the pages in order and repeats the sequence. Loop mode plays only the selected page.
@@ -19,11 +29,14 @@ WAV and MIDI export the chosen playback scope, including enabled backing parts.
 Run `node test.mjs` for geometry, note generation, drawing files, and export checks.
 Run `node browser-test.mjs` for touch-drawn arpeggios and rendered instrument audio
 in Chromium, plus page editing, saved song round trips, legacy imports, song playback,
-and backing audio. Physical iPhone output remains unverified on this host.
+backing audio, touch shapes, circle proportions, mirrored Undo, capacity, and cancellation.
+Physical iPhone output remains unverified on this host.
 Set `CHROMIUM_BINARY` if Chromium lives outside the NixOS system path.
 Run `bash deploy.sh` on hwc-work to publish through the existing `hwc-publish` service.
 The app uses reserved port 14000. Source files live in `dist/`; no build is needed.
 The published copy is `/opt/business/webapps/music-canvas/`.
+The primary repository is `/home/eric/600_apps/music-canvas` on hwc-work.
+Project work uses `ws create --resume music-grid /home/eric/600_apps/music-canvas`.
 
 Drawings are ephemeral browser state. Save song produces an editable version-3 JSON
 file managed by the user. Version-1 and version-2 files remain readable and retain

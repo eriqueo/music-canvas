@@ -48,6 +48,7 @@ try{
   let ready=false;
   for(let i=0;i<100;i++){ready=await evaluate(`!!document.querySelector('#pens')?.children.length`);if(ready)break;await sleep(100);}
   assert.ok(ready,'App must load');
+  assert.ok(await evaluate(`!!document.querySelector('#shape')&&!!document.querySelector('#symmetry')`),'Shape and mirror controls must be wired into the app');
   const tap=async selector=>{
     await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
     await sleep(200);
@@ -58,13 +59,14 @@ try{
   // Trusted control input unlocks Chromium audio before touch drawing.
   await tap('#play');await sleep(150);await tap('#play');
   assert.deepEqual(await evaluate('probe.sessionAtStart'),['playback'],'iPhone playback category must be set before audio creation');
-  async function draw(points){
-    await evaluate(`document.querySelector('#clear').click();document.querySelector('#canvas').scrollIntoView({block:'center'});probe.notes=[];`);
+  async function draw(points,clear=true,beforeEnd){
+    await evaluate(`${clear?"document.querySelector('#clear').click();":''}document.querySelector('#canvas').scrollIntoView({block:'center'});probe.notes=[];`);
     const rect=await evaluate(`(()=>{const r=document.querySelector('#canvas').getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height};})()`);
     for(let i=0;i<points.length;i++){
       const p=points[i];await send('Input.dispatchTouchEvent',{type:i?'touchMove':'touchStart',touchPoints:[{x:rect.x+rect.w*p.x,y:rect.y+rect.h*p.y,id:0}]});await sleep(30);
     }
-    await send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+    const cancelled=beforeEnd?await beforeEnd():false;
+    if(!cancelled)await send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
   }
   assert.equal(await evaluate(`document.querySelector('#timing').value`),'96');
   for(const [pen,{sound}] of Object.entries(PENS)){
@@ -125,6 +127,47 @@ try{
   assert.deepEqual((await save()).settings.parts,{bass:true,drums:true,arpeggio:true});
   await tap('#play');await sleep(700);assert.equal(await evaluate(`document.querySelector('#play').getAttribute('aria-pressed')`),'true');await tap('#play');
   console.log('Page add/copy/reorder/remove/undo, song save/open, legacy import, song playback/exports, and independent backing audio passed.');
+  const emptySong={...song,pages:[{strokes:[]}],selectedPage:0,song:false,settings:{...song.settings,bpm:120,parts:{bass:false,drums:false,arpeggio:false}}};
+  await open(emptySong);
+  const control=async(id,value)=>evaluate(`(()=>{const c=document.querySelector(${JSON.stringify(id)});c.value=${JSON.stringify(value)};c.dispatchEvent(new Event('change'));})()`);
+  await control('#shape','oval');await tap('[data-pen="blue"]');
+  assert.equal(await evaluate(`document.querySelector('#shape').value`),'oval','Selecting an instrument must retain the shape tool');
+  await draw([{x:.1,y:.2},{x:.4,y:.8}],true,async()=>{
+    assert.equal(await evaluate(`document.querySelector('#stroke-count').textContent`),'0 strokes','Preview must stay outside the saved drawing');
+    assert.ok(await evaluate(`(()=>{const c=document.querySelector('#canvas'),p=c.getContext('2d').getImageData(0,0,c.width,c.height).data;return p.some((v,i)=>i%4===3&&v>0);})()`),'Shape preview must be visible while dragging');
+  });
+  const ovalSong=await save();assert.equal(ovalSong.pages[0].strokes.length,2);assert.ok(ovalSong.pages[0].strokes.every(s=>s.sound==='flute'));
+  await evaluate('probe.notes=[];probe.ramps=[]');await tap('#play');await sleep(1000);await tap('#play');
+  assert.equal((await evaluate('probe.notes')).length,2,'Both oval contours must reach the live synthesizer');
+  const contourPitches=await evaluate('probe.ramps.map(f=>Math.round(69+12*Math.log2(f/440)))');assert.ok(Math.min(...contourPitches)<60&&Math.max(...contourPitches)>60);
+  await tap('#undo');assert.equal((await save()).pages[0].strokes.length,0,'One Undo must remove the whole shape');await tap('#redo');assert.deepEqual((await save()).pages,ovalSong.pages);
+  await open(ovalSong);assert.deepEqual(await save(),ovalSong,'Shapes must round-trip through the existing song file');
+  await send('Emulation.setDeviceMetricsOverride',{width:430,height:932,deviceScaleFactor:2,mobile:true});await sleep(100);
+  assert.deepEqual((await save()).pages,ovalSong.pages,'Resize must preserve normalized shape coordinates');
+  await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:2,mobile:true});await sleep(100);
+  for(const shape of ['circle','rectangle','triangle','diamond','line']){
+    await control('#shape',shape);await draw([{x:.2,y:.25},{x:.7,y:.75}]);const drawing=await save();
+    assert.equal(drawing.pages[0].strokes.length,{circle:2,rectangle:4,triangle:3,diamond:4,line:1}[shape]);
+    if(shape==='circle'){
+      const points=drawing.pages[0].strokes.flatMap(s=>s.points),rect=await evaluate(`(()=>{const r=document.querySelector('#canvas').getBoundingClientRect();return {w:r.width,h:r.height};})()`);
+      const dx=Math.max(...points.map(p=>p.x))-Math.min(...points.map(p=>p.x)),dy=Math.max(...points.map(p=>p.y))-Math.min(...points.map(p=>p.y));assert.ok(Math.abs(dx*rect.w-dy*rect.h)<1e-8);
+    }
+  }
+  await control('#shape','pen');await control('#symmetry','both');await draw([{x:.12,y:.2},{x:.28,y:.35}]);
+  const four=await save();assert.equal(four.pages[0].strokes.length,4);
+  await tap('#undo');assert.equal((await save()).pages[0].strokes.length,0,'All four reflections must undo together');
+  await tap('#redo');assert.deepEqual((await save()).pages,four.pages);
+  const nearFull={...emptySong,pages:[{strokes:Array.from({length:63},()=>four.pages[0].strokes[0])}]};
+  await open(nearFull);await control('#shape','rectangle');await draw([{x:.1,y:.1},{x:.3,y:.3}],false);
+  assert.equal((await save()).pages[0].strokes.length,63,'Capacity must reject the whole symmetric shape');
+  await open(emptySong);await control('#symmetry','off');await control('#shape','triangle');
+  await draw([{x:.2,y:.25},{x:.7,y:.75}],true,async()=>{
+    await send('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]});
+    return true;
+  });
+  assert.equal((await save()).pages[0].strokes.length,0,'Cancelled shape must not be committed');
+  assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth'),'New mobile shape controls must fit');
+  console.log('Touch shapes and preview, two-voice oval playback, round circles, shape Undo/Redo, mirrors, resize, save/open, capacity, and cancel passed.');
 }finally{
   socket?.close();chrome.kill();await sleep(300);await rm(profile,{recursive:true,force:true});server.closeAllConnections();await new Promise(r=>server.close(r));
 }
