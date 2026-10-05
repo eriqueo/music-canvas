@@ -1,150 +1,125 @@
-import { STEPS, ROWS, KEYS, SCALES, SOUNDS, emptyGrid, starterGrid, notesFor, stepDuration, loopEvents, midiFile, wavFile } from './music.mjs';
+import { LIMITS, KEYS, SCALES, SOUNDS, PENS, notesFor, pitchAt, loopEvents, eraseAt, parseDrawing, midiFile, wavFile } from './music.mjs';
 const $ = id => document.getElementById(id);
-let grid = starterGrid(), key = 0, scale = 'major', octave = 4, bpm = 100, swing = 0, sound = 'sine';
-let context, master, timer, running = false, nextStep = 0, nextTime = 0, frame, displayedStep = -1;
-let click = false, dragging = null, history = [], visualQueue = [], voices = new Set();
-const cells = [], stepLabels = [];
-// All state is ephemeral. History is capped at 30 edits; at capacity drop the oldest.
-function remember() { history.push(grid.map(row => [...row])); if (history.length > 30) history.shift(); $('undo').disabled = false; }
+const canvas = $('canvas'), paint = canvas.getContext('2d');
+const settings = { key:0, scale:'pentatonic', octave:3, range:2, bpm:100, swing:0, divisions:16, bars:1 };
+let strokes = [], undo = [], redo = [], pen = 'copper', sound = 'sine', tool = 'pen', guides = false, light = false;
+let active, pointerId, width = 1, height = 1, keyboard = { x:.1,y:.5 }, keyboardVisible = false;
+let context, master, voices = new Set(), running = false, playIntent = 0, timer, frame, cycleStart, eventIndex = 0, clickIndex = 0, click = false;
+let visualCycles = [], activeLoop;
+const colors = Object.fromEntries(Object.entries(PENS).map(([name,p]) => [name,getComputedStyle(document.documentElement).getPropertyValue(p.token).trim()]));
+const pitches = () => notesFor(settings.key,settings.scale,settings.octave,settings.range);
+function compile() { return { ...loopEvents(strokes,pitches(),settings.bpm,settings.swing,settings.divisions,settings.bars), bpm:settings.bpm,bars:settings.bars }; }
+let pendingLoop = compile();
 function status(text) { $('status').textContent = text; }
-function notes() { return notesFor(key, scale, octave); }
-for (const [id, options] of [['key', KEYS.map((name, i) => [i, name])], ['scale', Object.entries(SCALES).map(([id, s]) => [id, s.label])], ['sound', Object.entries(SOUNDS)]]) {
-  for (const [value, label] of options) { const option = document.createElement('option'); option.value = value; option.textContent = label; $(id).append(option); }
-}
-for (let row = 0; row < ROWS; row++) {
-  for (let step = 0; step < STEPS; step++) {
-    const cell = document.createElement('button'); cell.className = 'cell' + (step % 4 === 0 ? ' beat' : '');
-    cell.dataset.row = row; cell.dataset.step = step; cell.type = 'button'; cells.push(cell); $('grid').append(cell);
+function historyState() { $('undo').disabled = !undo.length; $('redo').disabled = !redo.length; }
+// Immutable completed stroke arrays make history bounded without copying every point.
+function remember() { undo.push(strokes); if (undo.length > LIMITS.history) undo.shift(); redo = []; historyState(); }
+function changed() { pendingLoop = compile(); $('stroke-count').textContent = `${strokes.length} ${strokes.length === 1 ? 'stroke' : 'strokes'}`; $('empty').hidden = strokes.length > 0 || !!active; redraw(); historyState(); if (pendingLoop.limited) status('This drawing reached the playback note limit. Erase some lines to hear more.'); }
+function redraw() {
+  paint.clearRect(0,0,width,height);
+  if (guides) {
+    const notes = pitches(); paint.font = '12px monospace'; paint.fillStyle = light ? colors.copper : getComputedStyle(document.documentElement).getPropertyValue('--text-muted');
+    paint.strokeStyle = colors.copper; paint.lineWidth = 1;
+    notes.forEach((n,i) => { const y = i / (notes.length - 1) * height; paint.globalAlpha = .12; paint.beginPath(); paint.moveTo(0,y); paint.lineTo(width,y); paint.stroke(); paint.globalAlpha = .65; paint.fillText(`${n.label}${n.octave}`,8,Math.max(14,Math.min(height-5,y-5))); });
   }
+  paint.globalAlpha = 1; paint.lineWidth = 4; paint.lineCap = 'round'; paint.lineJoin = 'round';
+  for (const stroke of [...strokes,...(active ? [active] : [])]) {
+    paint.strokeStyle = colors[stroke.pen]; paint.fillStyle = colors[stroke.pen]; paint.beginPath();
+    stroke.points.forEach((p,i) => i === 0 ? paint.moveTo(p.x*width,p.y*height) : paint.lineTo(p.x*width,p.y*height));
+    if (stroke.points.length === 1) { const p = stroke.points[0]; paint.arc(p.x*width,p.y*height,3,0,Math.PI*2); paint.fill(); } else paint.stroke();
+  }
+  if (keyboardVisible) { paint.strokeStyle = colors.copper; paint.lineWidth = 1; paint.beginPath(); paint.arc(keyboard.x*width,keyboard.y*height,9,0,Math.PI*2); paint.stroke(); }
 }
-for (let step = 0; step < STEPS; step++) {
-  const label = document.createElement('span'); label.textContent = step % 4 === 0 ? step / 4 + 1 : '·'; label.className = step % 4 === 0 ? 'beat' : '';
-  stepLabels.push(label); $('steps').append(label);
-}
-function render() {
-  const pitches = notes(); $('labels').replaceChildren();
-  pitches.forEach(n => { const label = document.createElement('div'); label.className = 'note-label' + (n.degree === 1 ? ' root' : ''); label.append(n.label); const sup = document.createElement('sup'); sup.textContent = n.octave; label.append(sup); $('labels').append(label); });
-  cells.forEach(cell => { const r = Number(cell.dataset.row), s = Number(cell.dataset.step), n = pitches[r]; cell.classList.toggle('active', grid[r][s]); cell.setAttribute('aria-pressed', String(grid[r][s])); cell.setAttribute('aria-label', `${n.label}${n.octave}, step ${s + 1}`); });
-  $('note-count').textContent = `${grid.flat().filter(Boolean).length} notes`;
-  $('octave').textContent = octave; $('octave-down').disabled = octave <= 2; $('octave-up').disabled = octave >= 6;
-}
+new ResizeObserver(() => { const r = canvas.getBoundingClientRect(), ratio = Math.min(window.devicePixelRatio || 1,3); width = r.width; height = r.height; canvas.width = Math.round(width*ratio); canvas.height = Math.round(height*ratio); paint.setTransform(ratio,0,0,ratio,0,0); redraw(); }).observe(canvas);
+for (const [id,options] of [['key',KEYS.map((n,i)=>[i,n])],['scale',Object.entries(SCALES).map(([id,s])=>[id,s.label])],['sound',Object.entries(SOUNDS)]]) for (const [value,label] of options) { const option = document.createElement('option'); option.value = value; option.textContent = label; $(id).append(option); }
+for (const [name,p] of Object.entries(PENS)) { const b = document.createElement('button'); b.setAttribute('aria-label',`${p.label} pen`); b.title = p.label; b.dataset.pen = name; b.style.setProperty('--pen-color',`var(${p.token})`); b.setAttribute('aria-pressed',String(name===pen)); b.onclick = () => { pen = name; selectTool('pen'); for (const item of $('pens').children) item.setAttribute('aria-pressed',String(item.dataset.pen===pen)); }; $('pens').append(b); }
+function syncSettings() { for (const [id,name] of [['key','key'],['scale','scale'],['range','range'],['timing','divisions'],['swing','swing'],['bars','bars'],['tempo','bpm']]) $(id).value = settings[name]; $('octave').textContent = settings.octave; $('bpm').textContent = settings.bpm; $('octave-down').disabled = settings.octave <= 2; $('octave-up').disabled = settings.octave >= 5; }
+function selectTool(value) { tool = value; $('pen').setAttribute('aria-pressed',String(tool==='pen')); $('eraser').setAttribute('aria-pressed',String(tool==='erase')); $('paper-wrap').classList.toggle('erasing',tool==='erase'); }
+$('pen').onclick = () => selectTool('pen'); $('eraser').onclick = () => selectTool('erase');
 async function audio() {
-  if (!context) {
-    const Audio = window.AudioContext || window.webkitAudioContext;
-    if (!Audio) throw new Error('AUDIO_UNAVAILABLE');
-    context = new Audio(); master = context.createGain(); master.gain.value = Number($('volume').value) / 100; master.connect(context.destination);
-  }
-  await context.resume();
-  if (context.state !== 'running') throw new Error('AUDIO_SUSPENDED');
-  return context;
+  if (!context) { const Audio = window.AudioContext || window.webkitAudioContext; if (!Audio) throw new Error('AUDIO_UNAVAILABLE'); context = new Audio(); master = context.createGain(); master.gain.value = Number($('volume').value)/100; master.connect(context.destination); }
+  await context.resume(); if (context.state !== 'running') throw new Error('AUDIO_SUSPENDED'); return context;
 }
-function synth(ctx, destination, midi, when, duration, type, level = .12, track = false) {
-  // Live voices are capped at 32. At capacity shed the oldest voice.
-  if (track && voices.size >= 32) { const oldest = voices.values().next().value; oldest.stop(); voices.delete(oldest); }
-  const oscillator = ctx.createOscillator(), envelope = ctx.createGain(); oscillator.type = type;
-  oscillator.frequency.value = 440 * 2 ** ((midi - 69) / 12);
-  envelope.gain.setValueAtTime(0, when); envelope.gain.linearRampToValueAtTime(level, when + .008);
-  envelope.gain.exponentialRampToValueAtTime(.001, when + duration + .12);
-  oscillator.connect(envelope); envelope.connect(destination); oscillator.start(when); oscillator.stop(when + duration + .14);
+function synth(ctx,destination,midi,when,duration,type,level=.06,track=false) {
+  // At the live voice limit, stop the oldest voice before creating another.
+  if (track && voices.size >= LIMITS.voices) { const oldest = voices.values().next().value; oldest.stop(); voices.delete(oldest); }
+  const oscillator = ctx.createOscillator(), envelope = ctx.createGain(); oscillator.type = type; oscillator.frequency.value = 440 * 2 ** ((midi-69)/12);
+  envelope.gain.setValueAtTime(0,when); envelope.gain.linearRampToValueAtTime(level,when+.008); envelope.gain.exponentialRampToValueAtTime(.001,when+duration+.08);
+  oscillator.connect(envelope); envelope.connect(destination); oscillator.start(when); oscillator.stop(when+duration+.1);
   if (track) voices.add(oscillator);
   oscillator.onended = () => { voices.delete(oscillator); oscillator.disconnect(); envelope.disconnect(); };
 }
-async function preview(row) { try { const ctx = await audio(); synth(ctx, master, notes()[row].midi, ctx.currentTime, .16, sound, .12, true); } catch { status('Sound could not start. Try Play loop in a browser with audio support.'); } }
-function paint(cell) {
-  const row = Number(cell.dataset.row), step = Number(cell.dataset.step);
-  if (grid[row][step] === dragging.value) return;
-  grid[row][step] = dragging.value; cell.classList.toggle('active', dragging.value); cell.setAttribute('aria-pressed', String(dragging.value));
-  $('note-count').textContent = `${grid.flat().filter(Boolean).length} notes`;
-  if (dragging.value && !running) preview(row);
+let previewMidi = null, previewTime = -Infinity;
+function preview(p) { const note = pitchAt(p.y,pitches()); $('pitch').textContent = `${note.label}${note.octave}`; if (!context || context.state !== 'running' || running) return; const now = context.currentTime; if (note.midi===previewMidi && now-previewTime<.14 || now-previewTime<.045) return; previewMidi=note.midi; previewTime=now; synth(context,master,note.midi,now,.09,sound,.07,true); }
+function point(event) { const r = canvas.getBoundingClientRect(); return { x:Math.max(0,Math.min(1,(event.clientX-r.left)/r.width)), y:Math.max(0,Math.min(1,(event.clientY-r.top)/r.height)) }; }
+function drawPoint(p) {
+  if (tool==='erase') strokes = eraseAt(strokes,p,14/width,14/height);
+  else if (active) { const last = active.points.at(-1); if (Math.hypot((p.x-last.x)*width,(p.y-last.y)*height)<1.5) return; if (active.points.length>=LIMITS.points) { status('Stroke limit reached. Lift your pen to start another line.'); return; } active.points.push(p); preview(p); }
+  redraw();
 }
-$('grid').addEventListener('pointerdown', event => {
-  const cell = event.target.closest('.cell'); if (!cell || event.button !== 0) return;
-  remember(); dragging = { value: !grid[Number(cell.dataset.row)][Number(cell.dataset.step)], pointerId: event.pointerId }; paint(cell);
-  if (event.pointerType === 'mouse') event.preventDefault();
+function finish() { if (pointerId===undefined && !active) return; if (active) { strokes=[...strokes,active]; active=undefined; } pointerId=undefined; $('pitch').textContent=''; changed(); }
+canvas.addEventListener('pointerdown',event => {
+  if (pointerId!==undefined || event.button!==0) return;
+  if (tool==='pen' && strokes.length>=LIMITS.strokes) { status('Drawing limit reached. Erase a line or clear the canvas to keep drawing.'); return; }
+  event.preventDefault(); keyboardVisible=false; canvas.focus({preventScroll:true}); pointerId=event.pointerId; canvas.setPointerCapture(event.pointerId); remember(); const p=point(event);
+  if (tool==='pen') active={pen,sound,points:[p]}; else strokes=eraseAt(strokes,p,14/width,14/height);
+  $('empty').hidden=true; status(''); audio().then(()=>preview(p)).catch(()=>status('Drawing works, but sound could not start. Try Play and check your browser audio.')); redraw();
 });
-document.addEventListener('pointermove', event => {
-  if (!dragging || dragging.pointerId !== event.pointerId) return;
-  const cell = document.elementFromPoint(event.clientX, event.clientY)?.closest('.cell'); if (cell) paint(cell);
+canvas.addEventListener('pointermove',event => { if (pointerId!==event.pointerId) return; event.preventDefault(); const samples=event.getCoalescedEvents?.() || []; for (const e of samples.length?samples:[event]) drawPoint(point(e)); });
+canvas.addEventListener('pointerup',event => { if (event.pointerId===pointerId) { drawPoint(point(event)); finish(); } });
+canvas.addEventListener('pointercancel',finish); canvas.addEventListener('lostpointercapture',finish);
+$('undo').onclick=()=>{finish();if(!undo.length)return;redo.push(strokes);strokes=undo.pop();changed();status('Last drawing edit undone.');};
+$('redo').onclick=()=>{finish();if(!redo.length)return;undo.push(strokes);strokes=redo.pop();changed();status('Drawing edit restored.');};
+$('clear').onclick=()=>{finish();if(!strokes.length)return;remember();strokes=[];changed();status('Canvas cleared. Undo brings your drawing back.');};
+$('guides').onclick=()=>{guides=!guides;$('guides').setAttribute('aria-pressed',String(guides));redraw();};
+$('paper').onclick=()=>{light=!light;$('paper-wrap').classList.toggle('light',light);$('paper').setAttribute('aria-pressed',String(light));$('paper').textContent=light?'Dark paper':'Light paper';redraw();};
+canvas.addEventListener('keydown',event=>{
+  const moves={ArrowRight:[.01,0],ArrowLeft:[-.01,0],ArrowUp:[0,-.01],ArrowDown:[0,.01]};
+  if(moves[event.key]) { event.preventDefault(); keyboardVisible=true; const old={...keyboard},[dx,dy]=moves[event.key]; keyboard={x:Math.max(0,Math.min(1,old.x+dx)),y:Math.max(0,Math.min(1,old.y+dy))};
+    if(event.shiftKey && strokes.length<LIMITS.strokes) { remember();strokes=[...strokes,{pen,sound,points:[old,{...keyboard}]}];changed();audio().then(()=>preview(keyboard)).catch(()=>status('Sound could not start.')); } else redraw();
+  } else if(event.key==='Enter' && strokes.length<LIMITS.strokes) {event.preventDefault();remember();strokes=[...strokes,{pen,sound,points:[{...keyboard}]}];changed();audio().then(()=>preview(keyboard)).catch(()=>status('Sound could not start.'));}
 });
-function endDrag() { dragging = null; }
-document.addEventListener('pointerup', endDrag); document.addEventListener('pointercancel', endDrag);
-$('grid').addEventListener('keydown', event => {
-  const cell = event.target.closest('.cell'); if (!cell) return;
-  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); remember(); dragging = { value: !grid[Number(cell.dataset.row)][Number(cell.dataset.step)] }; paint(cell); endDrag(); }
-  const moves = { ArrowRight: [0, 1], ArrowLeft: [0, -1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
-  if (moves[event.key]) { event.preventDefault(); const [dr, ds] = moves[event.key]; const r = Math.max(0, Math.min(ROWS - 1, Number(cell.dataset.row) + dr)); const s = Math.max(0, Math.min(STEPS - 1, Number(cell.dataset.step) + ds)); cells[r * STEPS + s].focus(); }
-});
-function showStep(step) {
-  if (step === displayedStep) return;
-  displayedStep = step; cells.forEach(cell => cell.classList.toggle('playhead', Number(cell.dataset.step) === step));
-  stepLabels.forEach((label, s) => label.classList.toggle('current', s === step));
-}
-function animate() {
-  if (!running) return;
-  while (visualQueue.length && visualQueue[0].time <= context.currentTime) showStep(visualQueue.shift().step);
-  frame = requestAnimationFrame(animate);
-}
+canvas.addEventListener('blur',()=>{keyboardVisible=false;redraw();});
+function stop() { playIntent++; running=false;clearInterval(timer);cancelAnimationFrame(frame);visualCycles=[];for(const voice of voices){try{voice.stop();}catch{}}voices.clear();$('play').textContent='▶ Play';$('play').setAttribute('aria-pressed','false');$('playhead').style.display='none'; }
 function schedule() {
-  if (!running) return;
-  if (nextTime < context.currentTime - .1) { stop(); status('Playback paused. Press Play loop to restart.'); return; }
-  const pitches = notes();
-  // 100ms scheduling horizon; queue <= 16. Shed and stop on a missed deadline.
-  let scheduled = 0;
-  while (nextTime < context.currentTime + .1 && scheduled++ < 8) {
-    const duration = stepDuration(nextStep, bpm, swing);
-    for (let row = 0; row < ROWS; row++) if (grid[row][nextStep]) synth(context, master, pitches[row].midi, nextTime, Math.min(duration * .82, .35), sound, .12, true);
-    if (click && nextStep % 4 === 0) synth(context, master, nextStep === 0 ? 100 : 93, nextTime, .015, 'sine', .06, true);
-    if (visualQueue.length >= 16) { stop(); status('Playback paused. Press Play loop to restart.'); return; }
-    visualQueue.push({ time: nextTime, step: nextStep }); nextTime += duration; nextStep = (nextStep + 1) % STEPS;
+  if(!running)return;
+  const now=context.currentTime,horizon=now+.1;
+  if(cycleStart+activeLoop.duration<now-.1) {stop();status('Playback paused after a delay. Press Play to restart.');return;}
+  let emitted=0;
+  for(let cycles=0;cycles<2;cycles++) {
+    while(eventIndex<activeLoop.events.length && cycleStart+activeLoop.events[eventIndex].time<horizon) {
+      if(++emitted>256){stop();status('Too many notes at once. Erase a few lines, then press Play.');return;}
+      const e=activeLoop.events[eventIndex++],when=cycleStart+e.time;
+      if(when>=now-.02)synth(context,master,e.midi,Math.max(now,when),Math.max(.02,e.duration-.015),e.sound,.06,true);
+    }
+    while(clickIndex<activeLoop.bars*4 && cycleStart+clickIndex*60/activeLoop.bpm<horizon) {
+      const when=cycleStart+clickIndex*60/activeLoop.bpm;
+      if(click && when>=now-.02)synth(context,master,clickIndex%4===0?100:93,Math.max(now,when),.01,'sine',.04,true);
+      clickIndex++;
+    }
+    if(cycleStart+activeLoop.duration>=horizon)break;
+    cycleStart+=activeLoop.duration;activeLoop=pendingLoop;eventIndex=0;clickIndex=0;
+    visualCycles.push({start:cycleStart,loop:activeLoop});if(visualCycles.length>2)visualCycles.shift();
   }
 }
-function stop() {
-  running = false; clearInterval(timer); cancelAnimationFrame(frame); visualQueue = []; nextStep = 0;
-  for (const voice of voices) { try { voice.stop(); } catch {} } voices.clear(); showStep(-1);
-  $('play-label').textContent = 'Play loop'; $('play-icon').textContent = '▶'; $('play').setAttribute('aria-pressed', 'false');
-}
-let starting = false;
-async function start() {
-  if (starting || running) return; starting = true;
-  try { await audio(); if (document.hidden) return; running = true; nextStep = 0; nextTime = context.currentTime + .04; $('play-label').textContent = 'Pause loop'; $('play-icon').textContent = 'Ⅱ'; $('play').setAttribute('aria-pressed', 'true'); status(''); schedule(); timer = setInterval(schedule, 25); animate(); }
-  catch { status('Sound could not start. Try again, and check your browser audio settings.'); }
-  finally { starting = false; }
-}
-$('play').addEventListener('click', () => running ? stop() : start());
-$('reset').addEventListener('click', () => { const wasRunning = running; stop(); if (wasRunning) start(); });
-document.addEventListener('visibilitychange', () => { if (document.hidden && running) { stop(); status('Playback paused while you were away.'); } });
-document.addEventListener('keydown', event => { if (event.code === 'Space' && !event.repeat && !event.target.closest('input,select,button,dialog')) { event.preventDefault(); running ? stop() : start(); } });
-$('key').addEventListener('change', event => { key = Number(event.target.value); render(); });
-$('scale').addEventListener('change', event => { scale = event.target.value; render(); });
-$('sound').addEventListener('change', event => { sound = event.target.value; });
-$('octave-down').addEventListener('click', () => { octave = Math.max(2, octave - 1); render(); });
-$('octave-up').addEventListener('click', () => { octave = Math.min(6, octave + 1); render(); });
-$('tempo').addEventListener('input', event => { bpm = Number(event.target.value); $('bpm').textContent = bpm; });
-$('swing').addEventListener('change', event => { swing = Number(event.target.value); });
-$('volume').addEventListener('input', event => { if (master) master.gain.setTargetAtTime(Number(event.target.value) / 100, context.currentTime, .015); });
-$('click').addEventListener('click', () => { click = !click; $('click').setAttribute('aria-pressed', String(click)); });
-$('clear').addEventListener('click', () => { remember(); grid = emptyGrid(); render(); status('Grid cleared. Use Undo to bring your notes back.'); });
-$('starter').addEventListener('click', () => { remember(); grid = starterGrid(); render(); status('Starter melody loaded. Make it your own.'); });
-$('undo').addEventListener('click', () => { if (!history.length) return; grid = history.pop(); $('undo').disabled = !history.length; render(); status('Last grid edit undone.'); });
-$('help').addEventListener('click', () => $('help-dialog').showModal());
-$('close-help').addEventListener('click', () => $('help-dialog').close());
-// Downloads are explicit, non-retriable user effects. No retry loop.
-function download(bytes, type, extension) {
-  const blob = new Blob([bytes], { type }), url = URL.createObjectURL(blob), anchor = document.createElement('a');
-  anchor.href = url; anchor.download = `music-grid-${KEYS[key].replace('♯', '-sharp').replace('♭', '-flat')}-${scale}.${extension}`;
-  document.body.append(anchor); anchor.click(); anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
-}
-$('midi').addEventListener('click', () => { download(midiFile(grid, notes(), bpm, swing), 'audio/midi', 'mid'); status('MIDI exported. Open it in your music software.'); });
-$('wav').addEventListener('click', async () => {
-  const button = $('wav'); button.disabled = true; button.textContent = 'Rendering…'; status('Preparing your audio…');
-  try {
-    const Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext; if (!Offline) throw new Error('OFFLINE_AUDIO_UNAVAILABLE');
-    const { events, duration } = loopEvents(grid, notes(), bpm, swing); const rate = 44100;
-    const ctx = new Offline(1, Math.ceil((duration + .3) * rate), rate), gain = ctx.createGain();
-    gain.gain.value = Number($('volume').value) / 100; gain.connect(ctx.destination);
-    for (const event of events) synth(ctx, gain, event.midi, event.time, event.duration, sound);
-    const rendered = await ctx.startRendering(); download(wavFile(rendered.getChannelData(0), rate), 'audio/wav', 'wav'); status('WAV exported. Your audio includes one loop and its release tail.');
-  } catch { status('Audio export failed. Try MIDI export or a browser with offline audio support.'); }
-  finally { button.disabled = false; button.innerHTML = 'Export WAV <span aria-hidden="true">↓</span>'; }
-});
-render();
+function animate() {if(!running)return;const now=context.currentTime;while(visualCycles.length>1 && visualCycles[1].start<=now)visualCycles.shift();const cycle=visualCycles[0];const fraction=Math.max(0,Math.min(1,(now-cycle.start)/cycle.loop.duration));$('playhead').style.left=`${fraction*100}%`;frame=requestAnimationFrame(animate);}
+async function start() { const intent=++playIntent; try{await audio();if(intent!==playIntent || document.hidden)return;finish();running=true;activeLoop=pendingLoop;cycleStart=context.currentTime+.04;eventIndex=0;clickIndex=0;visualCycles=[{start:cycleStart,loop:activeLoop}];$('play').textContent='Ⅱ Pause';$('play').setAttribute('aria-pressed','true');$('playhead').style.display='block';status('');schedule();timer=setInterval(schedule,25);animate();}catch{status('Sound could not start. Check your browser audio settings and try Play again.');} }
+$('play').onclick=()=>running?stop():start();
+$('restart').onclick=()=>{const resume=running;stop();if(resume)start();};
+$('click').onclick=()=>{click=!click;$('click').setAttribute('aria-pressed',String(click));};
+$('volume').oninput=()=>{if(master)master.gain.setTargetAtTime(Number($('volume').value)/100,context.currentTime,.015);};
+for(const [id,name] of [['key','key'],['scale','scale'],['range','range'],['timing','divisions'],['swing','swing'],['bars','bars'],['tempo','bpm']]) $(id).addEventListener(id==='tempo'?'input':'change',()=>{settings[name]=name==='scale'?$(id).value:Number($(id).value);syncSettings();changed();});
+$('sound').onchange=()=>{sound=$('sound').value;};
+$('octave-down').onclick=()=>{settings.octave=Math.max(2,settings.octave-1);syncSettings();changed();};
+$('octave-up').onclick=()=>{settings.octave=Math.min(5,settings.octave+1);syncSettings();changed();};
+$('help').onclick=()=>$('help-dialog').showModal();$('close-help').onclick=()=>$('help-dialog').close();
+// Explicit downloads are non-retriable user effects, kept outside retry loops.
+function download(bytes,type,extension) {const blob=new Blob([bytes],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`music-canvas.${extension}`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);}
+$('save').onclick=()=>{finish();download(JSON.stringify({version:1,settings,strokes}),'application/json','json');status('Drawing saved. Use Open to edit it again.');};
+$('open').onclick=()=>$('file').click();
+$('file').onchange=async()=>{const file=$('file').files[0];if(!file)return;try{if(file.size>LIMITS.fileBytes)throw new Error('FILE_TOO_LARGE');const drawing=parseDrawing(JSON.parse(await file.text()));stop();finish();remember();strokes=drawing.strokes;Object.assign(settings,drawing.settings);syncSettings();changed();status('Drawing opened.');}catch{status('Could not open this drawing. Choose a Music Canvas JSON file under 4 MB.');}finally{$('file').value='';}};
+$('midi').onclick=()=>{finish();download(midiFile(pendingLoop,settings.bpm),'audio/midi','mid');status('MIDI exported.');};
+$('wav').onclick=async()=>{finish();const b=$('wav');b.disabled=true;b.textContent='Rendering…';status('Preparing audio…');try{const Offline=window.OfflineAudioContext||window.webkitOfflineAudioContext;if(!Offline)throw new Error('OFFLINE_AUDIO_UNAVAILABLE');const loop=pendingLoop,rate=44100;const ctx=new Offline(1,Math.ceil((loop.duration+.2)*rate),rate),gain=ctx.createGain();gain.gain.value=Number($('volume').value)/100;gain.connect(ctx.destination);for(const e of loop.events)synth(ctx,gain,e.midi,e.time,Math.max(.02,e.duration-.015),e.sound);const rendered=await ctx.startRendering();download(wavFile(rendered.getChannelData(0),rate),'audio/wav','wav');status('WAV exported.');}catch{status('Audio export failed. Try MIDI or a browser with offline audio support.');}finally{b.disabled=false;b.textContent='WAV';}};
+document.addEventListener('visibilitychange',()=>{if(document.hidden){finish();if(running){stop();status('Playback paused while you were away.');}}});
+document.addEventListener('keydown',event=>{if(event.target.closest('input,select,dialog'))return;if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();event.shiftKey?$('redo').click():$('undo').click();return;}if(event.code==='Space'&&!event.repeat&&!event.target.closest('button')){event.preventDefault();running?stop():start();}if(event.key.toLowerCase()==='p')selectTool('pen');if(event.key.toLowerCase()==='e')selectTool('erase');});
+syncSettings();changed();

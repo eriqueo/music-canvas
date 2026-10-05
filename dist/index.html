@@ -1,41 +1,38 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Music Grid — a visual instrument</title>
-  <meta name="description" content="Make a melody by drawing notes. Explore scales, loop your ideas, and export your music as WAV or MIDI.">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d2021'/%3E%3Cg fill='%23cf995f'%3E%3Crect x='6' y='17' width='5' height='9' rx='2'/%3E%3Crect x='14' y='6' width='5' height='20' rx='2'/%3E%3Crect x='22' y='12' width='5' height='14' rx='2'/%3E%3C/g%3E%3C/svg%3E">
-  <link rel="stylesheet" href="palette.css"><link rel="stylesheet" href="theme.css"><link rel="stylesheet" href="style.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
-</head>
-<body>
-<main id="root">
-  <header class="masthead"><a class="identity" href="/" aria-label="Music Grid home"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>music grid<span class="period">.</span></a><button id="help" class="quiet">How to play <span class="help-mark">?</span></button></header>
-  <section class="workspace" aria-label="Music instrument">
-    <div class="workspace-heading"><div><p class="eyebrow">YOUR SOUND, ONE NOTE AT A TIME</p><h1>Make room for a melody<span class="period">.</span></h1></div><span class="loop-label">01 / LOOP STUDIO</span></div>
-    <div class="toolbar">
-      <label>KEY<select id="key" aria-label="Key"></select></label>
-      <label class="scale-field">SCALE<select id="scale" aria-label="Scale"></select></label>
-      <div class="octave-field"><span class="field-label">OCTAVE</span><div class="stepper"><button id="octave-down" aria-label="Lower octave">−</button><output id="octave">4</output><button id="octave-up" aria-label="Raise octave">+</button></div></div>
-      <label class="sound-field">SOUND<select id="sound" aria-label="Sound"></select></label>
-      <div class="toolbar-right"><button id="undo" class="quiet" disabled>Undo</button><button id="clear" class="quiet">Clear grid</button></div>
-    </div>
-    <div class="grid-shell"><div class="note-labels" id="labels" aria-hidden="true"></div><div class="grid-scroll"><div id="grid" role="group" aria-label="Melody grid"></div><div id="steps" class="steps" aria-hidden="true"></div></div></div>
-    <div class="grid-footer"><span><span class="tiny-square" aria-hidden="true"></span>Tap to add a note. Drag to draw.</span><span id="note-count">0 notes</span></div>
-    <div class="transport">
-      <button id="play" class="play-button"><span id="play-icon" aria-hidden="true">▶</span><span id="play-label">Play loop</span></button>
-      <button id="reset" class="icon-button" aria-label="Restart loop" title="Restart loop">↺</button>
-      <div class="tempo"><label for="tempo">TEMPO <output id="bpm">100</output> <span>BPM</span></label><input id="tempo" type="range" min="40" max="200" value="100" aria-label="Tempo"></div>
-      <label class="swing">SWING<select id="swing"><option value="0">Straight</option><option value="0.2">Light · 20%</option><option value="0.4">Loose · 40%</option></select></label>
-      <button id="click" class="toggle" aria-pressed="false"><span class="toggle-dot"></span>Click</button>
-      <div class="volume"><label for="volume" class="sr-only">Volume</label><span aria-hidden="true">♪</span><input id="volume" type="range" min="0" max="100" value="65" aria-label="Volume"></div>
-    </div>
-  </section>
-  <section class="below"><div class="idea"><p class="eyebrow">A LITTLE INSPIRATION</p><button id="starter" class="preset-button">A wandering melody <span class="preset-meta">16 steps · try it in minor</span></button></div><div class="exports"><p class="eyebrow">TAKE IT WITH YOU</p><div><button id="wav" class="export-button">Export WAV <span aria-hidden="true">↓</span></button><button id="midi" class="export-button">Export MIDI <span aria-hidden="true">↓</span></button></div></div></section>
-  <footer><span>A small space to play with music.</span><span><kbd>space</kbd> play / pause</span></footer>
-  <p id="status" role="status" aria-live="polite"></p>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Music Canvas — draw your sound</title><meta name="description" content="Draw freely, turn lines into melodies, and play them on a loop. A self-hosted music canvas.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d2021'/%3E%3Cpath d='M5 22Q11 2 17 17T27 9' fill='none' stroke='%23cf995f' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="palette.css"><link rel="stylesheet" href="theme.css"><link rel="stylesheet" href="style.css">
+</head><body><main id="root">
+<header><h1>music canvas<span>.</span></h1><div class="header-actions"><button id="save">Save drawing</button><button id="open">Open</button><button id="help" aria-label="How to play">?</button></div></header>
+<section class="instrument" aria-label="Drawing instrument">
+<aside class="tools" aria-label="Drawing tools">
+<div class="tool-group"><button id="pen" aria-pressed="true" title="Pen (P)">Pen</button><button id="eraser" aria-pressed="false" title="Eraser (E)">Erase</button></div>
+<div id="pens" class="pens" role="group" aria-label="Pen color"></div>
+<label class="sound-field">Sound<select id="sound"></select></label>
+<div class="tool-group history-tools"><button id="undo" disabled title="Undo (Ctrl Z)">Undo</button><button id="redo" disabled title="Redo (Ctrl Shift Z)">Redo</button><button id="clear">Clear</button></div>
+<button id="guides" aria-pressed="false">Guides</button><button id="paper" aria-pressed="false">Light paper</button>
+</aside>
+<div class="paper" id="paper-wrap"><canvas id="canvas" tabindex="0" aria-label="Free drawing music canvas. Draw with a pointer. Use arrow keys to move the keyboard pen, Enter to place a note, and Shift plus arrow keys to draw."></canvas><div id="empty" class="empty"><span>Draw something. Hear it move.</span><small>Left to right is time. Up and down is pitch.</small></div><div id="playhead" aria-hidden="true"></div><output id="pitch" aria-live="off"></output></div>
+</section>
+<section class="settings" aria-label="Music settings">
+<label>Key<select id="key"></select></label><label>Scale<select id="scale"></select></label><label>Range<select id="range"><option value="1">1 octave</option><option value="2" selected>2 octaves</option><option value="3">3 octaves</option></select></label>
+<div class="octave"><span>Octave</span><div><button id="octave-down" aria-label="Lower octave">−</button><output id="octave">3</output><button id="octave-up" aria-label="Raise octave">+</button></div></div>
+<label>Timing<select id="timing"><option value="96">Free</option><option value="8">1/8</option><option value="16" selected>1/16</option><option value="32">1/32</option></select></label>
+<label>Swing<select id="swing"><option value="0">Off</option><option value="0.2">Light</option><option value="0.4">Loose</option></select></label>
+<label>Loop<select id="bars"><option value="1">1 bar</option><option value="2">2 bars</option><option value="4">4 bars</option></select></label>
+<button id="click" class="toggle" aria-pressed="false">Click</button>
+</section>
+<section class="transport" aria-label="Playback and export">
+<button id="play" class="primary" aria-pressed="false">▶ Play</button><button id="restart" aria-label="Restart playback">↺</button>
+<label class="tempo">Tempo <output id="bpm">100</output><span>BPM</span><input id="tempo" type="range" min="40" max="200" value="100"></label>
+<label class="volume">Volume<input id="volume" type="range" min="0" max="100" value="65"></label>
+<div class="exports"><button id="wav">WAV</button><button id="midi">MIDI</button></div>
+</section>
+<footer><p id="status" role="status" aria-live="polite">Draw with a mouse, finger, or pen. Press space to play.</p><span id="stroke-count">0 strokes</span></footer>
+<input id="file" type="file" accept=".json,application/json" hidden>
 </main>
-<dialog id="help-dialog"><div class="dialog-heading"><h2>A few notes to get started.</h2><button id="close-help" class="icon-button" aria-label="Close help">×</button></div><p>Each column is a moment in time. Each row is a note in your chosen scale.</p><ol><li>Tap a square to add or remove a note. Drag across the grid to draw.</li><li>Press Play loop, or use the space bar. The loop repeats every four beats.</li><li>Change the key or scale to hear the same pattern in a new way.</li><li>Export WAV for audio, or MIDI to keep working in your music software.</li></ol><p class="dialog-note">Notes stay on this page until you reload. Export a loop to keep it. Playback pauses when you leave the tab.</p></dialog>
+<dialog id="help-dialog"><div class="dialog-title"><h2>Draw your sound.</h2><button id="close-help" aria-label="Close help">×</button></div><p>Draw freely on the canvas. Horizontal position sets when a note plays. Higher marks make higher notes.</p><p>Lines become melodies as the playhead moves across them. Overlapping lines make chords. Colors help you separate parts. Each stroke keeps the sound you selected when you drew it.</p><p>Use Erase to cut a line, or Undo to go back. Timing changes the rhythm without changing your drawing. Guides show the notes in the current scale.</p><p>Save drawing keeps editable lines in a file. WAV exports audio. MIDI exports notes. Your work stays in this tab until you save it.</p><p>Keyboard: P for pen, E for erase, space for playback, Ctrl/Cmd Z for undo. Focus the canvas and use arrows to move, Enter to place a note, or Shift plus arrows to draw.</p></dialog>
 <script type="module" src="app.mjs"></script>
 </body></html>
