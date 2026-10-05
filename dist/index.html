@@ -5,12 +5,12 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d2021'/%3E%3Cpath d='M5 22Q11 2 17 17T27 9' fill='none' stroke='%23cf995f' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="palette.css"><link rel="stylesheet" href="theme.css"><link rel="stylesheet" href="style.css">
 </head><body><main id="root">
-<header><h1>music canvas<span>.</span></h1><div class="header-actions"><button id="save">Save drawing</button><button id="open">Open</button><button id="help" aria-label="How to play">?</button></div></header>
+<header><h1>music canvas<span>.</span></h1><div class="header-actions"><button id="save">Save song</button><button id="open">Open</button><button id="help" aria-label="How to play">?</button></div></header>
 <section class="instrument" aria-label="Drawing instrument">
 <aside class="tools" aria-label="Drawing tools">
 <div class="tool-group"><button id="pen" aria-pressed="true" title="Pen (P)">Pen</button><button id="eraser" aria-pressed="false" title="Eraser (E)">Erase</button></div>
 <div id="pens" class="pens" role="group" aria-label="Pen color"></div>
-<label class="sound-field">Sound<select id="sound"></select></label>
+<div class="sound-field">Instrument<output id="instrument-name">Keys</output></div>
 <div class="tool-group history-tools"><button id="undo" disabled title="Undo (Ctrl Z)">Undo</button><button id="redo" disabled title="Redo (Ctrl Shift Z)">Redo</button><button id="clear">Clear</button></div>
 <button id="guides" aria-pressed="false">Guides</button><button id="paper" aria-pressed="false">Light paper</button>
 </aside>
@@ -21,18 +21,23 @@
 <div class="octave"><span>Octave</span><div><button id="octave-down" aria-label="Lower octave">−</button><output id="octave">3</output><button id="octave-up" aria-label="Raise octave">+</button></div></div>
 <label>Timing<select id="timing"><option value="96">Free</option><option value="8">1/8</option><option value="16">1/16</option><option value="32">1/32</option></select></label>
 <label>Swing<select id="swing"><option value="0">Off</option><option value="0.2">Light</option><option value="0.4">Loose</option></select></label>
-<label>Loop<select id="bars"><option value="1">1 bar</option><option value="2">2 bars</option><option value="4">4 bars</option></select></label>
+<label>Loop length<select id="bars"><option value="1">8 beats</option><option value="2">16 beats</option><option value="4">32 beats</option></select></label>
 <button id="click" class="toggle" aria-pressed="false">Click</button>
+</section>
+<section class="arrangement" aria-label="Song loops">
+<div id="pages" class="pages" role="group" aria-label="Drawing pages"></div>
+<div class="page-actions"><button id="page-add">+ Add loop</button><button id="page-copy">Duplicate</button><button id="page-earlier" aria-label="Move loop earlier">←</button><button id="page-later" aria-label="Move loop later">→</button><button id="page-delete">Remove loop</button><button id="song" aria-pressed="false">Song mode</button><output id="play-scope"></output></div>
 </section>
 <section class="transport" aria-label="Playback and export">
 <button id="play" class="primary" aria-pressed="false">▶ Play</button><button id="restart" aria-label="Restart playback">↺</button>
-<label class="tempo">Tempo <output id="bpm">100</output><span>BPM</span><input id="tempo" type="range" min="40" max="200" value="100"></label>
+<div id="parts" class="parts" role="group" aria-label="Backing parts"></div>
+<label class="tempo">Tempo <output id="bpm">120</output><span>BPM</span><input id="tempo" type="range" min="40" max="200" value="120"></label>
 <label class="volume">Volume<input id="volume" type="range" min="0" max="100" value="65"></label>
 <div class="exports"><button id="wav">WAV</button><button id="midi">MIDI</button></div>
 </section>
 <footer><p id="status" role="status" aria-live="polite">Draw with a mouse, finger, or pen. Press space to play.</p><span id="stroke-count">0 strokes</span></footer>
 <input id="file" type="file" accept=".json,application/json" hidden>
 </main>
-<dialog id="help-dialog"><div class="dialog-title"><h2>Draw your sound.</h2><button id="close-help" aria-label="Close help">×</button></div><p>Draw freely on the canvas. Horizontal position sets when a note plays. Higher marks make higher notes.</p><p>Lines become melodies as the playhead moves across them. Overlapping lines make chords. Colors help you separate parts. Each stroke keeps the sound you selected when you drew it.</p><p>Use Erase to cut a line, or Undo to go back. Timing changes the rhythm without changing your drawing. Guides show the notes in the current scale.</p><p>Save drawing keeps editable lines in a file. WAV exports audio. MIDI exports notes. Your work stays in this tab until you save it.</p><p>Keyboard: P for pen, E for erase, space for playback, Ctrl/Cmd Z for undo. Focus the canvas and use arrows to move, Enter to place a note, or Shift plus arrows to draw.</p></dialog>
+<dialog id="help-dialog"><div class="dialog-title"><h2>Draw your sound.</h2><button id="close-help" aria-label="Close help">×</button></div><p>Draw freely on the canvas. Horizontal position sets when a note plays. Higher marks make higher notes.</p><p>Each color plays its own instrument: Keys, Pluck, Bell, Marimba, Flute, Strings, Chime, Bass, or 8-bit. Overlapping lines make chords. Each stroke keeps its instrument.</p><p>The dot buttons add Bass, Drums, and Arpeggio. Turn them on separately or together. Their colored dots show the rhythm below your drawing. They follow the key and tempo and are included in exports.</p><p>Use Erase to cut a line, or Undo to go back. Timing changes the rhythm without changing your drawing. Guides show the notes in the current scale.</p><p>Add loop creates another picture. Duplicate and the arrows build your sequence. Turn on Song mode and press Play to hear all loops in order. At 120 BPM, an eight-beat loop lasts four seconds. Save song keeps all editable pictures and backing parts in a file. WAV exports audio. MIDI exports notes and instrument channels. Your work stays in this tab until you save it.</p><p>Keyboard: P for pen, E for erase, space for playback, Ctrl/Cmd Z for undo. Focus the canvas and use arrows to move, Enter to place a note, or Shift plus arrows to draw.</p></dialog>
 <script type="module" src="app.mjs"></script>
 </body></html>

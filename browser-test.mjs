@@ -1,8 +1,9 @@
 // Exercises the real app with Chromium touch input and analyses its exported PCM.
 // This verifies browser wiring, not physical iPhone speaker output.
 import assert from 'node:assert/strict';
+import {PENS} from './dist/music.mjs';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -31,16 +32,16 @@ try{
   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:2,mobile:true});
   await send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:1});
   await send('Page.addScriptToEvaluateOnNewDocument',{source:`
-    window.probe={notes:[],sessionAtStart:[]};
+    window.probe={notes:[],ramps:[],sessionAtStart:[],blobs:{}};
     Object.defineProperty(navigator,'audioSession',{value:{type:'auto'}});
     const Native=window.AudioContext;
     window.AudioContext=new Proxy(Native,{construct(T,args){
       probe.sessionAtStart.push(navigator.audioSession.type);
       const c=Reflect.construct(T,args),create=c.createOscillator.bind(c);
-      c.createOscillator=()=>{const o=create(),start=o.start.bind(o);o.start=(...args)=>{probe.notes.push(o.frequency.value);return start(...args);};return o;};return c;
+      c.createOscillator=()=>{const o=create(),start=o.start.bind(o),ramp=o.frequency.exponentialRampToValueAtTime.bind(o.frequency);o.frequency.exponentialRampToValueAtTime=(v,t)=>{probe.ramps.push(v);return ramp(v,t);};o.start=(...args)=>{probe.notes.push(o.frequency.value);return start(...args);};return o;};return c;
     }});
     const objectURL=URL.createObjectURL.bind(URL);
-    URL.createObjectURL=blob=>{if(blob.type==='audio/wav')probe.wav=blob;return objectURL(blob);};
+    URL.createObjectURL=blob=>{probe.blobs[blob.type]=blob;if(blob.type==='audio/wav')probe.wav=blob;return objectURL(blob);};
     HTMLAnchorElement.prototype.click=function(){};
   `});
   await send('Page.navigate',{url:target});
@@ -66,28 +67,64 @@ try{
     await send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
   }
   assert.equal(await evaluate(`document.querySelector('#timing').value`),'96');
-  for(const sound of ['sine','triangle','square']){
-    await evaluate(`document.querySelector('#sound').value=${JSON.stringify(sound)};document.querySelector('#sound').dispatchEvent(new Event('change'));`);
+  for(const [pen,{sound}] of Object.entries(PENS)){
+    await tap(`[data-pen="${pen}"]`);
     await draw([{x:.1,y:.9},{x:.12,y:.1}]);
-    await evaluate('probe.notes=[]');await tap('#play');await sleep(750);await tap('#play');
+    await evaluate('probe.notes=[];probe.ramps=[]');await tap('#play');await sleep(750);await tap('#play');
     const notes=await evaluate('probe.notes.map(f=>Math.round(69+12*Math.log2(f/440)))');
-    assert.deepEqual(notes,[50,52,55,57,60,62,64,67,69],`${sound}: touch diagonal must reach the live synthesizer as a rising arpeggio`);
+    if(['flute','strings','bass','chip'].includes(sound)){
+      assert.equal(notes.length,1,`${sound} must hold one voice along the line`);
+      assert.deepEqual(await evaluate('probe.ramps.map(f=>Math.round(69+12*Math.log2(f/440)))'),[52,55,57,60,62,64,67,69],`${sound} must follow all pitch changes`);
+    }else assert.deepEqual(notes,[50,52,55,57,60,62,64,67,69],`${sound}: touch diagonal must reach every pitch`);
   }
-  const spectra={};
-  for(const sound of ['sine','triangle','square']){
-    await evaluate(`document.querySelector('#sound').value=${JSON.stringify(sound)};document.querySelector('#sound').dispatchEvent(new Event('change'));probe.wav=null;`);
+  const fingerprints=[];
+  for(const [pen,{sound}] of Object.entries(PENS)){
+    await tap(`[data-pen="${pen}"]`);
+    await evaluate('probe.wav=null');
     await draw([{x:.1,y:.8},{x:.9,y:.8}]);
     await tap('#wav');
     for(let i=0;i<100;i++){if(await evaluate('!!probe.wav'))break;await sleep(50);}
-    spectra[sound]=await evaluate(`(async()=>{
-      const view=new DataView(await probe.wav.arrayBuffer()),rate=view.getUint32(24,true),f=440*2**((52-69)/12),start=Math.floor(.4*rate),n=Math.floor(.5*rate);
-      return [1,2,3].map(h=>{let re=0,im=0,total=0;for(let i=0;i<n;i++){const w=.5-.5*Math.cos(2*Math.PI*i/(n-1)),v=view.getInt16(44+(start+i)*2,true)/32768*w,phase=2*Math.PI*f*h*i/rate;re+=v*Math.cos(phase);im+=v*Math.sin(phase);total+=w;}return 2*Math.hypot(re,im)/total;});
-    })()`);
+    const fingerprint=await evaluate(`(async()=>{const bytes=await probe.wav.arrayBuffer(),view=new DataView(bytes);let energy=0;for(let i=44;i<bytes.byteLength;i+=2)energy+=Math.abs(view.getInt16(i,true));return {energy,hash:Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).join(',')};})()`);
+    assert.ok(fingerprint.energy>100000,`${sound} must render audible samples`);fingerprints.push(fingerprint.hash);
   }
-  console.log('Rendered harmonic amplitudes',spectra);
-  assert.ok(spectra.sine[1]/spectra.sine[0]>.15,'Soft keys need audible upper harmonics');
-  assert.ok(spectra.triangle[2]/spectra.triangle[0]>.2,'Warm synth needs stronger upper harmonics');
-  console.log('Mobile touch arpeggio, playback category, and three rendered sounds passed.');
+  assert.equal(new Set(fingerprints).size,9,'Each color must render a distinct instrument');
+  assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth'),'Mobile controls must fit');
+  console.log('Nine audible instruments, mobile drawing, sustained pitch glide, and playback category passed.');
+  const save=async()=>{await tap('#save');return evaluate(`probe.blobs['application/json'].text().then(JSON.parse)`);};
+  const open=async drawing=>{await evaluate(`(()=>{const transfer=new DataTransfer();transfer.items.add(new File([JSON.stringify(${JSON.stringify(drawing)})],'song.json',{type:'application/json'}));const input=document.querySelector('#file');input.files=transfer.files;input.dispatchEvent(new Event('change'));})()`);for(let i=0;i<100;i++){if(await evaluate(`document.querySelector('#status').textContent==='Song opened.'`))return;await sleep(25);}throw new Error('Song import failed');};
+  const first=await save();assert.equal(first.pages[0].strokes[0].sound,'chip');
+  await tap('#page-add');await tap('[data-pen="teal"]');await draw([{x:.1,y:.2},{x:.9,y:.2}]);
+  const two=await save();assert.equal(two.pages.length,2);assert.equal(two.pages[1].strokes[0].sound,'keys');assert.equal(two.song,true);
+  await tap('#page-copy');const three=await save();assert.equal(three.pages.length,3);assert.deepEqual(three.pages[2],three.pages[1]);
+  await tap('#page-earlier');await tap('#page-earlier');const reordered=await save();assert.equal(reordered.pages[0].strokes[0].sound,'keys');assert.equal(reordered.pages[1].strokes[0].sound,'chip');
+  await tap('#page-delete');assert.equal((await save()).pages.length,2);await tap('#undo');assert.deepEqual((await save()).pages,reordered.pages);
+  const song={...two,settings:{...two.settings,bpm:200},selectedPage:0};
+  await open(song);assert.deepEqual(await save(),song);
+  if(process.argv[3]){
+    await evaluate('scrollTo(0,0)');const height=await evaluate('document.documentElement.scrollHeight');
+    const capture=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:true,clip:{x:0,y:0,width:390,height,scale:1}});await writeFile(process.argv[3],Buffer.from(capture.data,'base64'));
+  }
+  await tap('#play');
+  let next=false;for(let i=0;i<70;i++){if(await evaluate(`document.querySelector('[data-page="1"]').getAttribute('aria-current')==='true'`)){next=true;break;}await sleep(50);}
+  assert.ok(next,'Song must advance to the next picture after eight beats');await tap('#play');
+  await evaluate('probe.wav=null');await tap('#wav');for(let i=0;i<100;i++){if(await evaluate('!!probe.wav'))break;await sleep(50);}
+  const seconds=await evaluate(`probe.wav.arrayBuffer().then(b=>{const v=new DataView(b);return v.getUint32(40,true)/2/v.getUint32(24,true);})`);
+  assert.ok(Math.abs(seconds-5.3)<1/44100,'Song WAV must contain both 2.4-second loops plus release tail');
+  await tap('#midi');assert.ok(await evaluate(`probe.blobs['audio/midi'].size>30`));
+  const legacy={version:1,settings:two.settings,strokes:[{...two.pages[0].strokes[0],sound:'triangle'}]};
+  const beforeImport=await save();await open(legacy);assert.equal((await save()).pages[0].strokes[0].sound,'triangle');
+  await tap('#undo');assert.deepEqual(await save(),beforeImport,'Undo import must restore both drawings and song settings');await tap('#redo');assert.equal((await save()).pages[0].strokes[0].sound,'triangle');
+  await tap('#clear');
+  for(const part of ['bass','drums','arpeggio']){
+    await tap(`#part-${part}`);assert.equal(await evaluate(`document.querySelector('#part-${part}').getAttribute('aria-pressed')`),'true');
+    await evaluate('probe.wav=null');await tap('#wav');for(let i=0;i<100;i++){if(await evaluate('!!probe.wav'))break;await sleep(50);}
+    const energy=await evaluate(`probe.wav.arrayBuffer().then(b=>{const v=new DataView(b);let sum=0;for(let i=44;i<b.byteLength;i+=2)sum+=Math.abs(v.getInt16(i,true));return sum;})`);assert.ok(energy>100000,`${part} must sound without a drawing`);
+    await tap(`#part-${part}`);
+  }
+  await tap('#part-bass');await tap('#part-drums');await tap('#part-arpeggio');
+  assert.deepEqual((await save()).settings.parts,{bass:true,drums:true,arpeggio:true});
+  await tap('#play');await sleep(700);assert.equal(await evaluate(`document.querySelector('#play').getAttribute('aria-pressed')`),'true');await tap('#play');
+  console.log('Page add/copy/reorder/remove/undo, song save/open, legacy import, song playback/exports, and independent backing audio passed.');
 }finally{
   socket?.close();chrome.kill();await sleep(300);await rm(profile,{recursive:true,force:true});server.closeAllConnections();await new Promise(r=>server.close(r));
 }
