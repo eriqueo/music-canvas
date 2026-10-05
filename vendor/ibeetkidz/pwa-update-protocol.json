@@ -1,0 +1,8 @@
+{
+  "messageType": "SKIP_WAITING",
+  "controllerChangeEvent": "controllerchange",
+  "releaseRequestType": "GET_RELEASE_ID",
+  "releaseResponseType": "RELEASE_ID",
+  "markerCache": "ibeetkidz-pwa-handshake-v1",
+  "legacyNavigationPath": "__pwa_legacy_navigation__"
+}

@@ -1,3 +1,5 @@
+import {loadUpdate} from './boot.mjs';
+import {setupLibrary} from './library-ui.mjs';
 import {icon,buttonFace,setupPictures,refreshPickers} from './ui.mjs';
 import { LIMITS, KEYS, SCALES, INSTRUMENTS, PENS, LAYERS, DRUMS, DRAWING_VERSION, PULSES_PER_LOOP, FREE_TIMING, notesFor, pitchAt, pitchPositions, SNAP_MODES, snapPitch, compileLoop, compileSong, audioTimeline, remainingEvent, eraseAt, parseDrawing, midiFile, wavFile } from './music.mjs';
 const $ = id => document.getElementById(id);
@@ -5,6 +7,7 @@ import {SHAPES,SYMMETRIES,shapePaths,mirrorStrokes,eraseObjectAt,SCENES,sceneDra
 const NOISE_SEED=0x31415926;
 const canvas = $('canvas'), paint = canvas.getContext('2d');
 const settings = { key:0, scale:'pentatonic', octave:3, range:2, bpm:120, swing:0, divisions:FREE_TIMING, bars:1, parts:Object.fromEntries(Object.keys(LAYERS).map(id=>[id,false])) };
+let library;
 let project={pages:[{strokes:[]}],index:0},songMode=false;
 const page={get strokes(){return project.pages[project.index].strokes;},set strokes(value){project.pages[project.index]={strokes:value};}};
 let undo = [], redo = [], pen = 'teal', sound = PENS[pen].sound, tool = 'pen', symmetry='off', guides = false, light = false;
@@ -37,13 +40,13 @@ function snapshot(){return {pages:project.pages.map(p=>({...p})),index:project.i
 function restore(state){project={pages:state.pages,index:state.index};songMode=state.song;Object.assign(settings,state.settings);syncSettings();}
 function strokeCount(){return project.pages.reduce((n,p)=>n+p.strokes.length,0);}
 function remember() { undo.push(snapshot()); if (undo.length > LIMITS.history) undo.shift(); redo = []; historyState(); }
-function changed() { pendingLoop = compile(); if(!running){paused=undefined;scanX=undefined;playerPosition(0);} $('stroke-count').textContent = `${page.strokes.length} ${page.strokes.length === 1 ? 'stroke' : 'strokes'}`; $('empty').hidden = page.strokes.length > 0 || !!active || Object.values(settings.parts).some(Boolean); redraw();renderPages();historyState(); if (pendingLoop.limited) status('This drawing reached the playback note limit. Erase some lines to hear more.'); }
+function changed(save=true) { pendingLoop = compile(); if(!running){paused=undefined;scanX=undefined;playerPosition(0);} $('stroke-count').textContent = `${page.strokes.length} ${page.strokes.length === 1 ? 'stroke' : 'strokes'}`; $('empty').hidden = page.strokes.length > 0 || !!active || Object.values(settings.parts).some(Boolean); redraw();renderPages();historyState(); if (pendingLoop.limited) status('This drawing reached the playback note limit. Erase some lines to hear more.'); if(save)library?.commit(); }
 function paintStrokes(ctx,strokes,w,h,thickness){
   ctx.globalAlpha=1;ctx.lineWidth=thickness;ctx.lineCap='round';ctx.lineJoin='round';
   for(const stroke of strokes){ctx.strokeStyle=colors[stroke.pen];ctx.fillStyle=colors[stroke.pen];ctx.beginPath();stroke.points.forEach((p,i)=>i?ctx.lineTo(p.x*w,p.y*h):ctx.moveTo(p.x*w,p.y*h));if(stroke.points.length===1){const p=stroke.points[0];ctx.arc(p.x*w,p.y*h,Math.max(2,thickness*.75),0,Math.PI*2);ctx.fill();}else ctx.stroke();}
 }
 function renderPages(){
-  $('pages').replaceChildren();project.pages.forEach((p,index)=>{const b=document.createElement('button');b.className='page';b.dataset.page=index;b.setAttribute('aria-label',`Loop ${index+1}`);b.setAttribute('aria-current',String(index===project.index));const thumbnail=document.createElement('canvas');thumbnail.width=100;thumbnail.height=60;thumbnail.setAttribute('aria-hidden','true');paintStrokes(thumbnail.getContext('2d'),p.strokes,100,60,2);b.append(thumbnail,`Loop ${index+1}`);b.onclick=()=>{finish();stop();project.index=index;changed();};$('pages').append(b);});
+  $('pages').replaceChildren();project.pages.forEach((p,index)=>{const b=document.createElement('button');b.className='page';b.dataset.page=index;b.setAttribute('aria-label',`Loop ${index+1}`);b.setAttribute('aria-current',String(index===project.index));const thumbnail=document.createElement('canvas');thumbnail.width=100;thumbnail.height=60;thumbnail.setAttribute('aria-hidden','true');paintStrokes(thumbnail.getContext('2d'),p.strokes,100,60,2);b.append(thumbnail,`Loop ${index+1}`);b.onclick=()=>{finish();stop();project.index=index;changed(false);};$('pages').append(b);});
   $('page-delete').disabled=project.pages.length===1;$('page-earlier').disabled=project.index===0;$('page-later').disabled=project.index===project.pages.length-1;
   $('page-add').disabled=project.pages.length>=LIMITS.pages;$('page-copy').disabled=project.pages.length>=LIMITS.pages||strokeCount()+page.strokes.length>LIMITS.strokes;
   $('song').setAttribute('aria-pressed',String(songMode));$('play-scope').textContent=songMode?`Song · ${project.pages.length} loops`:`Loop ${project.index+1} · ${settings.bars*PULSES_PER_LOOP} beats`;
@@ -114,11 +117,13 @@ $('snap').onchange=()=>{finish();snapMode=$('snap').value;keyboard=snap(keyboard
 $('drawing-view').value=grid?'grid':'drawing';
 $('drawing-view').onchange=()=>{finish();grid=$('drawing-view').value==='grid';try{localStorage.setItem('music-canvas:grid',String(grid));}catch{}redraw();status(grid?'Grid editor: time columns with your selected pitch snapping.':'Drawing view.');};
 $('symmetry').onchange=()=>{finish();symmetry=$('symmetry').value;redraw();};
-async function audio() {
+async function audio(recover=true) {
   // Media playback must remain audible when an iPhone's ringer is set to silent.
   if(navigator.audioSession)navigator.audioSession.type='playback';
-  if (!context) { const Audio = window.AudioContext || window.webkitAudioContext; if (!Audio) throw new Error('AUDIO_UNAVAILABLE'); context = new Audio(); master = output(context,Number($('volume').value)/100);noise=makeNoise(context,NOISE_SEED); }
-  await context.resume(); if (context.state !== 'running') throw new Error('AUDIO_SUSPENDED'); return context;
+  if (!context) { const Audio = window.AudioContext || window.webkitAudioContext; if (!Audio) throw new Error('AUDIO_UNAVAILABLE'); context = new Audio(); const created=context; created.addEventListener('statechange',()=>{if(context===created&&created.state!=='running'&&running){pause();status('Sound paused. Tap Play to continue.');}}); master = output(context,Number($('volume').value)/100);noise=makeNoise(context,NOISE_SEED); }
+  try{await context.resume();if(context.state==='running')return context;}catch{}
+  if(recover){const old=context;context=undefined;master=undefined;noise=undefined;void old.close().catch(()=>{});return audio(false);}
+  throw new Error('AUDIO_SUSPENDED');
 }
 function output(ctx,volume){const gain=ctx.createGain(),compressor=ctx.createDynamicsCompressor();gain.gain.value=volume;compressor.threshold.value=-8;compressor.knee.value=6;compressor.ratio.value=12;compressor.attack.value=.003;compressor.release.value=.12;gain.connect(compressor);compressor.connect(ctx.destination);return gain;}
 function makeNoise(ctx,seed){const b=ctx.createBuffer(1,Math.ceil(ctx.sampleRate*.3),ctx.sampleRate),data=b.getChannelData(0);let state=seed;for(let i=0;i<data.length;i++){state^=state<<13;state^=state>>>17;state^=state<<5;data[i]=(state>>>0)/2147483648-1;}return b;}
@@ -177,7 +182,7 @@ canvas.addEventListener('pointermove',event => { if (pointerId!==event.pointerId
 canvas.addEventListener('pointerleave',()=>{hoverX=undefined;markers();});
 canvas.addEventListener('pointerup',event => { if (event.pointerId===pointerId) { drawPoint(point(event)); finish(); } });
 function cancelDrawing(){if(tool!=='pen'&&tool!=='erase')active=undefined;finish();}
-canvas.addEventListener('pointercancel',cancelDrawing); canvas.addEventListener('lostpointercapture',cancelDrawing);
+for(const type of ['pointercancel','lostpointercapture'])canvas.addEventListener(type,event=>{if(event.pointerId===pointerId)cancelDrawing();});
 $('undo').onclick=()=>{finish();if(!undo.length)return;stop();redo.push(snapshot());restore(undo.pop());changed();status('Last edit undone.');};
 $('redo').onclick=()=>{finish();if(!redo.length)return;stop();undo.push(snapshot());restore(redo.pop());changed();status('Edit restored.');};
 $('clear').onclick=()=>{finish();if(!page.strokes.length)return;remember();page.strokes=[];changed();status('Loop cleared. Undo brings it back.');};
@@ -220,25 +225,36 @@ function schedule() {
     visualCycles.push({start:cycleStart,loop:activeLoop});if(visualCycles.length>2)visualCycles.shift();
   }
 }
-function animate() {if(!running)return;const now=context.currentTime;while(visualCycles.length>1 && visualCycles[1].start<=now)visualCycles.shift();const cycle=visualCycles[0],position=Math.max(0,now-cycle.start);const cue=[...cycle.loop.cues].reverse().find(c=>c.start<=position)||cycle.loop.cues[0];if(project.index!==cue.index){finish();project.index=cue.index;changed();}playerPosition(position,cycle.loop);const fraction=Math.max(0,Math.min(1,(position-cue.start)/cue.duration));$('playhead').style.left=`${fraction*100}%`;scanX=fraction;markers();frame=requestAnimationFrame(animate);}
+function animate() {if(!running)return;const now=context.currentTime;while(visualCycles.length>1 && visualCycles[1].start<=now)visualCycles.shift();const cycle=visualCycles[0],position=Math.max(0,now-cycle.start);const cue=[...cycle.loop.cues].reverse().find(c=>c.start<=position)||cycle.loop.cues[0];if(project.index!==cue.index){finish();project.index=cue.index;changed(false);}playerPosition(position,cycle.loop);const fraction=Math.max(0,Math.min(1,(position-cue.start)/cue.duration));$('playhead').style.left=`${fraction*100}%`;scanX=fraction;markers();frame=requestAnimationFrame(animate);}
 async function start() { const intent=++playIntent; try{await audio();if(intent!==playIntent || document.hidden)return;finish();const saved=paused;paused=undefined;running=true;activeLoop=saved?.loop??pendingLoop;const position=saved?.position??0;cycleStart=context.currentTime+.04-position;eventIndex=activeLoop.audioEvents.findIndex(e=>e.time>=position);if(eventIndex<0)eventIndex=activeLoop.audioEvents.length;clickIndex=Math.ceil(position*activeLoop.bpm/60);if(position>0)for(const e of activeLoop.audioEvents){const remaining=remainingEvent(e,position);if(remaining)renderEvent(context,master,remaining,context.currentTime+.04,true,noise);}visualCycles=[{start:cycleStart,loop:activeLoop}];$('pause').disabled=false;$('play').setAttribute('aria-pressed','true');$('playhead').style.display='block';status('');schedule();timer=setInterval(schedule,25);animate();}catch{status('Sound could not start. Check your browser audio settings and try Play again.');} }
 $('play').onclick=()=>running?pause():start();
 $('pause').onclick=pause;$('stop').onclick=stop;
 $('restart').onclick=()=>{const resume=running;stop();if(resume)start();};
 $('click').onclick=()=>{click=!click;$('click').setAttribute('aria-pressed',String(click));};
 $('volume').oninput=()=>{if(master)master.gain.setTargetAtTime(Number($('volume').value)/100,context.currentTime,.015);};
-for(const [id,name] of [['key','key'],['scale','scale'],['range','range'],['timing','divisions'],['swing','swing'],['bars','bars'],['tempo','bpm']]) $(id).addEventListener(id==='tempo'?'input':'change',()=>{settings[name]=name==='scale'?$(id).value:Number($(id).value);syncSettings();changed();});
+for(const [id,name] of [['key','key'],['scale','scale'],['range','range'],['timing','divisions'],['swing','swing'],['bars','bars'],['tempo','bpm']]) $(id).addEventListener(id==='tempo'?'input':'change',()=>{settings[name]=name==='scale'?$(id).value:Number($(id).value);syncSettings();changed(id!=='tempo');});
+$('tempo').addEventListener('change',()=>library?.commit());
 $('octave-down').onclick=()=>{settings.octave=Math.max(2,settings.octave-1);syncSettings();changed();};
 $('octave-up').onclick=()=>{settings.octave=Math.min(5,settings.octave+1);syncSettings();changed();};
 $('help').onclick=()=>$('help-dialog').showModal();$('close-help').onclick=()=>$('help-dialog').close();
 // Explicit downloads are non-retriable user effects, kept outside retry loops.
-function download(bytes,type,extension) {const blob=new Blob([bytes],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`music-canvas.${extension}`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);}
+let preparedFile,preparedUrl;
+function prepareFile(bytes,type,name){
+  preparedFile=new File([bytes],name,{type});if(preparedUrl)URL.revokeObjectURL(preparedUrl);preparedUrl=URL.createObjectURL(preparedFile);
+  for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
+  $('share-message').textContent=`${name} is ready. Tap Share to choose Files or another app.`;
+  $('share-file').hidden=!(typeof navigator.share==='function'&&navigator.canShare?.({files:[preparedFile]}));
+  $('share-file-dialog').showModal();
+}
+function download(bytes,type,extension){prepareFile(bytes,type,`music-canvas.${extension}`);}
+$('share-file').onclick=async()=>{try{await navigator.share({files:[preparedFile],title:'My music'});$('share-message').textContent='Shared.';}catch(e){$('share-message').textContent=e.name==='AbortError'?'Sharing canceled. Your file is still ready.':'Could not share. Try Save file.';}};
+$('download-file').onclick=()=>{const a=document.createElement('a');a.href=preparedUrl;a.download=preparedFile.name;document.body.append(a);a.click();a.remove();$('share-message').textContent='File sent to your browser. Check Files or Downloads.';};
 $('save').onclick=()=>{finish();download(JSON.stringify({version:DRAWING_VERSION,settings,pages:project.pages,selectedPage:project.index,song:songMode}),'application/json','json');status('Song saved. Use Open to edit it again.');};
 $('open').onclick=()=>$('file').click();
-$('file').onchange=async()=>{const file=$('file').files[0];if(!file)return;try{if(file.size>LIMITS.fileBytes)throw new Error('FILE_TOO_LARGE');const drawing=parseDrawing(JSON.parse(await file.text()));stop();finish();remember();project={pages:drawing.pages,index:drawing.selectedPage};songMode=drawing.song;Object.assign(settings,drawing.settings);syncSettings();changed();status('Song opened.');}catch{status('Could not open this song. Choose a Music Canvas JSON file under 4 MB.');}finally{$('file').value='';}};
+$('file').onchange=async()=>{const file=$('file').files[0];if(!file)return;try{if(file.size>LIMITS.fileBytes)throw new Error('FILE_TOO_LARGE');const drawing=parseDrawing(JSON.parse(await file.text()));await library?.beforeImport();stop();finish();remember();project={pages:drawing.pages,index:drawing.selectedPage};songMode=drawing.song;Object.assign(settings,drawing.settings);syncSettings();changed();status('Song opened.');}catch{status('Could not open this song. Choose a Music Canvas JSON file under 4 MB.');}finally{$('file').value='';}};
 $('midi').onclick=()=>{finish();try{download(midiFile(pendingLoop,settings.bpm),'audio/midi','mid');status('MIDI exported.');}catch{status('MIDI needs more than 15 instrument and tuning channels. Export WAV or use fewer instruments.');}};
 $('wav').onclick=async()=>{finish();const b=$('wav');b.disabled=true;b.textContent='Rendering…';status('Preparing audio…');try{const Offline=window.OfflineAudioContext||window.webkitOfflineAudioContext;if(!Offline)throw new Error('OFFLINE_AUDIO_UNAVAILABLE');const loop=pendingLoop,rate=44100;const tail=Math.max(...Object.values(INSTRUMENTS).map(i=>i.release));const ctx=new Offline(1,Math.ceil((loop.duration+tail+.05)*rate),rate),gain=output(ctx,Number($('volume').value)/100),buffer=makeNoise(ctx,NOISE_SEED);for(const e of loop.audioEvents)renderEvent(ctx,gain,e,e.time,false,buffer);const rendered=await ctx.startRendering();download(wavFile(rendered.getChannelData(0),rate),'audio/wav','wav');status('WAV exported.');}catch{status('Audio export failed. Try MIDI or a browser with offline audio support.');}finally{b.disabled=false;buttonFace(b,'export','Audio');}};
-document.addEventListener('visibilitychange',()=>{if(document.hidden){finish();if(running){stop();status('Playback paused while you were away.');}}});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){finish();if(running){pause();status('Playback paused while you were away. Tap Play to continue.');}}});
 document.addEventListener('keydown',event=>{if(event.target.closest('input,select,dialog'))return;if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();event.shiftKey?$('redo').click():$('undo').click();return;}if(event.code==='Space'&&!event.repeat&&!event.target.closest('button')){event.preventDefault();running?pause():start();}if(event.key.toLowerCase()==='p')selectTool('pen');if(event.key.toLowerCase()==='e')selectTool('erase');});
 setupPictures({preview:(id,value)=>{
   if(id!=='scene'&&id!=='shape')return;
@@ -249,4 +265,12 @@ setupPictures({preview:(id,value)=>{
   paintStrokes(thumbnail.getContext('2d'),strokes,180,100,4);return thumbnail;
 }});
 buttonFace($('wav'),'export','Audio');buttonFace($('midi'),'song','MIDI');
-syncSettings();changed();
+syncSettings();changed(false);
+const initialDrawing={version:DRAWING_VERSION,settings:structuredClone(settings),pages:[{strokes:[]}],selectedPage:0,song:false};
+library=await setupLibrary({
+  capture:()=>({version:DRAWING_VERSION,settings,pages:project.pages,selectedPage:project.index,song:songMode}),
+  apply:value=>{const drawing=parseDrawing(value||initialDrawing);project={pages:drawing.pages,index:drawing.selectedPage};songMode=drawing.song;Object.assign(settings,drawing.settings);undo=[];redo=[];syncSettings();changed(false);},
+  thumbnail:(drawing={pages:project.pages})=>{const c=document.createElement('canvas');c.width=140;c.height=70;paintStrokes(c.getContext('2d'),drawing.pages[0].strokes,140,70,2);return c.toDataURL('image/png');},
+  finish,stop,status,prepareFile,reload:loadUpdate,
+});
+document.documentElement.dataset.ready='true';

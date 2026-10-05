@@ -2,42 +2,29 @@
 // This verifies browser wiring, not physical iPhone speaker output.
 import assert from 'node:assert/strict';
 import {PENS} from './dist/music.mjs';
-import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {launchBrowser,sleep} from './browser-driver.mjs';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { tmpdir } from 'node:os';
-const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const server=createServer(async(req,res)=>{
   const name=new URL(req.url,'http://localhost').pathname.slice(1)||'index.html';
-  if(!/^[a-z]+\.(html|css|mjs)$/.test(name)){res.writeHead(404).end();return;}
-  try{res.setHeader('Content-Type',name.endsWith('.mjs')?'text/javascript':name.endsWith('.css')?'text/css':'text/html');res.end(await readFile(new URL(`dist/${name}`,import.meta.url)));}catch{res.writeHead(404).end();}
+  if(!/^[a-z0-9-]+\.(html|css|mjs|png|webmanifest)$/.test(name)){res.writeHead(404).end();return;}
+  try{res.setHeader('Content-Type',name.endsWith('.mjs')?'text/javascript':name.endsWith('.css')?'text/css':'text/html');res.end(await readFile(new URL(`release/${name}`,import.meta.url)));}catch{res.writeHead(404).end();}
 });
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const target=process.argv[2]||`http://127.0.0.1:${server.address().port}/`;
-const profile=await mkdtemp(`${tmpdir()}/music-audio-`);
-const chrome=spawn(process.env.CHROMIUM_BINARY||'/run/current-system/sw/bin/chromium',['--headless','--no-sandbox','--no-first-run','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
-let socket;
+const browser=await launchBrowser();
 try{
-  let port;
-  for(let i=0;i<100;i++){try{port=(await readFile(`${profile}/DevToolsActivePort`,'utf8')).split('\n')[0];break;}catch{await sleep(100);}}
-  assert.ok(port,'Chromium must start');
-  const tabs=await(await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-  socket=new WebSocket(tabs.find(t=>t.type==='page').webSocketDebuggerUrl);
-  await new Promise((r,j)=>{socket.onopen=r;socket.onerror=j;});
-  let id=0;const pending=new Map();
-  socket.onmessage=e=>{const m=JSON.parse(e.data);if(m.id){const p=pending.get(m.id);pending.delete(m.id);m.error?p.reject(m.error):p.resolve(m.result);}};
-  const send=(method,params={})=>new Promise((resolve,reject)=>{const n=++id;pending.set(n,{resolve,reject});socket.send(JSON.stringify({id:n,method,params}));});
-  const evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw new Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
+  const {send,evaluate}=browser;
   await send('Page.enable');
   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:2,mobile:true});
   await send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:1});
   await send('Page.addScriptToEvaluateOnNewDocument',{source:`
-    window.probe={notes:[],ramps:[],sessionAtStart:[],blobs:{}};
+    window.probe={notes:[],ramps:[],sessionAtStart:[],contexts:[],blobs:{}};
     Object.defineProperty(navigator,'audioSession',{value:{type:'auto'}});
     const Native=window.AudioContext;
     window.AudioContext=new Proxy(Native,{construct(T,args){
       probe.sessionAtStart.push(navigator.audioSession.type);
-      const c=Reflect.construct(T,args),create=c.createOscillator.bind(c);
+      const c=Reflect.construct(T,args);probe.contexts.push(c);const create=c.createOscillator.bind(c);
       c.createOscillator=()=>{const o=create(),start=o.start.bind(o),ramp=o.frequency.exponentialRampToValueAtTime.bind(o.frequency);o.frequency.exponentialRampToValueAtTime=(v,t)=>{probe.ramps.push(v);return ramp(v,t);};o.start=(...args)=>{probe.notes.push(o.frequency.value);return start(...args);};return o;};return c;
     }});
     const objectURL=URL.createObjectURL.bind(URL);
@@ -46,11 +33,11 @@ try{
   `});
   await send('Page.navigate',{url:target});
   let ready=false;
-  for(let i=0;i<100;i++){ready=await evaluate(`!!document.querySelector('#pens')?.children.length`);if(ready)break;await sleep(100);}
+  for(let i=0;i<100;i++){ready=await evaluate(`document.documentElement.dataset.ready==='true'`);if(ready)break;await sleep(100);}
   assert.ok(ready,'App must load');
   assert.ok(await evaluate(`!!document.querySelector('#shape')&&!!document.querySelector('#symmetry')`),'Shape and mirror controls must be wired into the app');
   assert.ok(await evaluate(`Array.from(document.querySelectorAll('[data-pen]')).every(b=>{const r=b.getBoundingClientRect();return r.x>=0&&r.right<=innerWidth&&r.width>=44;})`),'All ten instrument choices must be visible on mobile without horizontal scrolling');
-  for(const [width,height,mobile] of [[1832,858,false],[1280,720,false],[1024,768,false],[390,844,true],[375,812,true]]){
+  for(const [width,height,mobile] of [[1832,858,false],[1280,720,false],[1024,768,false],[820,1180,false],[1180,820,false],[600,820,true],[390,844,true],[375,812,true]]){
     await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:mobile?2:1,mobile});await sleep(120);
     const clipped=await evaluate(`Array.from(document.querySelectorAll('#root button,#root select')).filter(b=>{const r=b.getBoundingClientRect(),p=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return r.x<0||r.y<0||r.right>innerWidth+.5||r.bottom>innerHeight+.5||(!b.disabled&&p&&!b.contains(p));}).map(b=>b.id||b.dataset.pen)`);
     assert.deepEqual(clipped,[],`Controls must be visible and reachable at ${width}×${height}`);
@@ -84,8 +71,12 @@ try{
   // Trusted control input unlocks Chromium audio before touch drawing.
   await tap('#play');await sleep(150);await tap('#play');
   assert.deepEqual(await evaluate('probe.sessionAtStart'),['playback'],'iPhone playback category must be set before audio creation');
+  await evaluate(`probe.contexts[0].resume=()=>Promise.reject(new Error('Interrupted context fixture'));`);
+  await tap('#play');await sleep(150);assert.equal(await evaluate(`document.querySelector('#play').getAttribute('aria-pressed')`),'true');assert.equal(await evaluate('probe.contexts.length'),2,'Play replaces a failed audio context once');
+  await evaluate('probe.contexts[1].suspend()');await sleep(100);assert.equal(await evaluate(`document.querySelector('#play').getAttribute('aria-pressed')`),'false','Audio interruption pauses playback');
+  await tap('#play');await sleep(100);assert.equal(await evaluate(`document.querySelector('#play').getAttribute('aria-pressed')`),'true');await tap('#stop');
   async function draw(points,clear=true,beforeEnd){
-    await evaluate(`${clear?"document.querySelector('#clear').click();":''}document.querySelector('#canvas').scrollIntoView({block:'center'});probe.notes=[];`);
+    await evaluate(`for(const dialog of document.querySelectorAll("dialog[open]"))dialog.close();${clear?"document.querySelector('#clear').click();":''}document.querySelector('#canvas').scrollIntoView({block:'center'});probe.notes=[];`);
     const rect=await evaluate(`(()=>{const r=document.querySelector('#canvas').getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height};})()`);
     for(let i=0;i<points.length;i++){
       const p=points[i];await send('Input.dispatchTouchEvent',{type:i?'touchMove':'touchStart',touchPoints:[{x:rect.x+rect.w*p.x,y:rect.y+rect.h*p.y,id:0}]});await sleep(30);
@@ -100,6 +91,9 @@ try{
   await draw([{x:.2,y:.3},{x:.4,y:.5}],false,async()=>{
     assert.equal(await evaluate(`document.querySelector('#playhead').style.display`),'none','Hover line must hide during drawing');
     assert.equal(await evaluate(`document.querySelectorAll('.crossing').length`),0,'Hover dots must hide during drawing');
+    const pitch=await evaluate(`document.querySelector('#pitch').textContent`);assert.ok(pitch);
+    await evaluate(`document.querySelector('#canvas').dispatchEvent(new PointerEvent('pointercancel',{pointerId:999,bubbles:true}));`);
+    assert.equal(await evaluate(`document.querySelector('#pitch').textContent`),pitch,'Canceling an extra pointer must preserve the active drawing');
   });
   assert.equal(await evaluate(`document.querySelector('#timing').value`),'96');
   for(const [pen,{sound}] of Object.entries(PENS)){
@@ -125,7 +119,7 @@ try{
   assert.equal(new Set(fingerprints).size,Object.keys(PENS).length,'Each color must render a distinct instrument');
   assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth'),'Mobile controls must fit');
   console.log('Ten audible instruments, mobile drawing, sustained pitch glide, and playback category passed.');
-  const save=async()=>{await tap('#save');return evaluate(`probe.blobs['application/json'].text().then(JSON.parse)`);};
+  const save=async()=>{await tap('#save');const drawing=await evaluate(`probe.blobs['application/json'].text().then(JSON.parse)`);await evaluate(`document.querySelector('#share-file-dialog').close()`);return drawing;};
   const open=async drawing=>{await evaluate(`(()=>{const transfer=new DataTransfer();transfer.items.add(new File([JSON.stringify(${JSON.stringify(drawing)})],'song.json',{type:'application/json'}));const input=document.querySelector('#file');input.files=transfer.files;input.dispatchEvent(new Event('change'));})()`);for(let i=0;i<100;i++){if(await evaluate(`document.querySelector('#status').textContent==='Song opened.'`))return;await sleep(25);}throw new Error('Song import failed');};
   const first=await save();assert.equal(first.pages[0].strokes[0].sound,Object.values(PENS).at(-1).sound);
   await tap('#page-add');await tap('[data-pen="teal"]');await draw([{x:.1,y:.2},{x:.9,y:.2}]);
@@ -267,5 +261,5 @@ try{
   console.log('Viewport bars, random drawings and Undo, saved object erase, brush erase, Pause/resume and Stop passed.');
   console.log('Touch shapes and preview, two-voice oval playback, round circles, shape Undo/Redo, mirrors, resize, save/open, capacity, and cancel passed.');
 }finally{
-  socket?.close();chrome.kill();await sleep(300);await rm(profile,{recursive:true,force:true});server.closeAllConnections();await new Promise(r=>server.close(r));
+  await browser.close(true);server.closeAllConnections();await new Promise(r=>server.close(r));
 }

@@ -181,3 +181,13 @@ button,select{min-width:48px;min-height:48px;-webkit-tap-highlight-color:transpa
 /* Space separates the choice tiles, sound colors, and edit tools. */
 .tools .palette{margin:var(--space-xl) 0}
 @media(max-width:700px){.tools{max-height:380px}.tools .palette{margin:var(--space-lg) 0}}
+/* Picture library and adult controls use the existing token vocabulary. */
+.song-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:var(--space-lg);margin-top:var(--space-lg)}
+.song-list article{display:flex;flex-direction:column;gap:var(--space-sm)}
+.song-list article>button:first-child{min-height:110px;display:flex;flex-direction:column;align-items:center;gap:var(--space-sm)}
+.song-list img{width:140px;height:70px;object-fit:contain;border-radius:6px;background:var(--surface-card)}
+.library-actions{display:flex;flex-wrap:wrap;gap:var(--space-md);margin:var(--space-lg) 0}
+#rename-song{display:flex;gap:var(--space-md);align-items:end}#rename-song label{flex:1}#song-name{width:100%;font-size:16px;min-height:48px;color:var(--text-body);background:var(--surface-card);border:1px solid var(--border-default);border-radius:6px}
+#save-state{font-size:11px;color:var(--text-muted)}
+body{padding-bottom:env(safe-area-inset-bottom);padding-top:env(safe-area-inset-top)}
+@media(max-width:700px){header .header-actions{gap:4px}header h1{font-size:18px}footer{gap:4px}footer p{flex:1;min-width:0}#save-state{white-space:nowrap}#save-state{margin-left:auto}}

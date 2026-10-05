@@ -1,0 +1,17 @@
+{
+  "name": "music-canvas",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node test.mjs && node storage-test.mjs",
+    "test:browser": "node browser-test.mjs",
+    "test:offline": "node offline-test.mjs",
+    "test:pwa": "node build.mjs && node pwa-test.mjs && node offline-test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "fake-indexeddb": "6.2.5",
+    "workbox-build": "7.4.1"
+  }
+}

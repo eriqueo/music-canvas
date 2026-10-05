@@ -65,12 +65,49 @@ Undo, saved-object erasing, brush erasing, Pause/resume, and Stop.
 Physical iPhone output remains unverified on this host.
 Set `CHROMIUM_BINARY` if Chromium lives outside the NixOS system path.
 Run `bash deploy.sh` on hwc-work to publish through the existing `hwc-publish` service.
-The app uses reserved port 14000. Source files live in `dist/`; no build is needed.
+The app uses reserved port 14000. Source files live in `dist/`. Run `npm ci` and `npm run build` to generate
+`release/`, the exact deployment artifact. Workbox precaches its complete asset
+list with SHA-384 integrity; a partial or HTML-fallback response rejects an update.
+The iBeetKidz launch handshake stages updates during use and blocks activation
+while a sibling client remains. Workbox cleans obsolete precache entries only
+when the replacement activates. Build output is reproducible from source.
+Run `node storage-test.mjs` and `node offline-test.mjs` for save recovery and
+cold-process offline/update/rollback and full-library recovery checks in addition to the existing tests.
+
+Install on current iPadOS: Safari → Share → Add to Home Screen → Open as Web App.
+Open the installed app online, use Settings → Finish setup, and wait for Ready
+offline. Setup and updates need access to the HTTPS address; subsequent cached
+play does not need Wi-Fi or Tailscale. Settings → Load update first saves your
+work, requests activation on the idle page, then reloads. Close other Music Canvas
+windows first. The startup wait is bounded; if a browser keeps an update staged,
+close and reopen the app. Share prepares a file, then a
+second tap opens the share sheet; Save file is the download fallback.
+
+Actual iPad speaker output, Apple Pencil/palm behavior, and offline export to Files
+remain device acceptance steps. Chromium tests do not certify those behaviors.
+Source reuse and attribution are listed in REUSE.md.
 The published copy is `/opt/business/webapps/music-canvas/`.
 The primary repository is `/home/eric/600_apps/music-canvas` on hwc-work.
 Project work uses `ws create --resume music-grid /home/eric/600_apps/music-canvas`.
 
-Drawings are ephemeral browser state. Save song produces an editable version-3 JSON
+Completed edits save automatically in IndexedDB on this device. My Songs holds
+named, editable songs with picture thumbnails. New, Copy, Rename and confirmed
+Remove actions preserve the current song until saving succeeds. Recover last edit
+restores an earlier committed revision. Settings and completed gestures save;
+playback page advances do not create revisions. The adapter waits for transaction
+completion and rejects stale revisions from other windows. A failed save keeps the
+in-memory drawing and shows an error; export it before reloading.
+
+Songs are CRITICAL user data: local storage is not a backup. Grown-up settings
+provides a version-1 library backup and additive Restore to Files, plus a storage
+persistence request with the actual result. Safari and Home Screen libraries may
+be separate; backup/restore transfers them. Clearing website data removes songs.
+There are at most 100 songs, 100 MiB including three recovery revisions per song.
+At capacity, new writes fail visibly; stored songs are never silently evicted.
+My Songs stays available so another saved song can be removed before Retry save.
+Thumbnails are REPLACEABLE projections of the stored vectors and are rebuilt on restore.
+
+Save song produces an editable version-3 JSON
 file managed by the user. Version-1 and version-2 files remain readable and retain
 their explicit instruments. Version 3 accepts an optional per-stroke pitchStep (1 for semitones, 0.5 for quarter tones), and
 optional per-page stroke object number (1–64) to preserve gesture groups. Missing pitchStep retains the original scale-note mapping. Current readers preserve
@@ -87,6 +124,6 @@ Capacity limits are defined in `dist/music.mjs`: 16 pages, 64 total strokes, 102
 per stroke, 24 history entries, 4096 events per loop, and 16384 events per song.
 Adding or copying pages and drawing further strokes reject work at capacity;
 history drops its oldest entry; compiled events and eraser pieces
-drop later entries; live audio stops its oldest voice. Playback pauses in hidden tabs.
+drop later entries; live audio stops its oldest voice. Playback pauses in hidden tabs and retains its position; Play resumes it.
 
 To remove only this deployment, run `hwc-publish --remove music-canvas`.

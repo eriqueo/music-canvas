@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+import {indexedDB} from 'fake-indexeddb';
+import {createIndexedDbStore,createMemoryStore,createSaveCoordinator} from './dist/library.mjs';
+const drawing={version:3,settings:{key:0,scale:'pentatonic',octave:3,range:2,bpm:120,swing:0,divisions:96,bars:1,parts:{bass:false,drums:false,arpeggio:false}},pages:[{strokes:[]}],selectedPage:0,song:false};
+const store=createIndexedDbStore({factory:indexedDB,name:'test-library',limits:{songs:2,bytes:100000,revisions:3}});
+await store.init();
+let first=await store.put({id:'one',title:'First',drawing,updated:1},0);
+assert.equal(first.revision,1);assert.equal((await store.list())[0].drawing,undefined);
+await assert.rejects(()=>store.put({...first,drawing},0),e=>e.code==='conflict');
+first=await store.put({...first,drawing:{...drawing,song:true},updated:2},1);
+assert.equal((await store.get('one')).previous.length,1);
+await store.recover('one',1,2);assert.equal((await store.get('one')).drawing.song,false);
+const backup=await store.backup();await store.remove('one');
+await store.importBackup(backup,()=> 'restored');assert.equal((await store.get('restored')).drawing.song,false);
+await assert.rejects(()=>store.importBackup({...backup,version:99},()=> 'bad'),e=>e.code==='invalid');
+await store.put({id:'two',title:'Second',drawing,updated:3},0);
+await assert.rejects(()=>store.put({id:'three',title:'Third',drawing,updated:4},0),e=>e.code==='full');
+store.close();assert.equal((await store.list()).length,2,'closed adapter reopens');
+let release,active=0,max=0,writes=[];
+const saver=createSaveCoordinator(async value=>{max=Math.max(max,++active);writes.push(value);if(value===1)await new Promise(r=>release=r);active--;},()=>{});
+saver.schedule(1);await new Promise(r=>setTimeout(r,0));saver.schedule(2);saver.schedule(3);release();await saver.flush();assert.deepEqual(writes,[1,3]);assert.equal(max,1);
+let attempts=0;const failed=createSaveCoordinator(async()=>{attempts++;throw Object.assign(new Error(),{code:'full'});},()=>{});
+failed.schedule(1);await assert.rejects(()=>failed.flush());failed.schedule(2);await new Promise(r=>setTimeout(r,0));assert.equal(attempts,1,'known failed sink does not auto retry');
+console.log('Library revisions, conflict rejection, bounded storage, backup restore, connection reopen and serialized autosave passed.');
+// Request success precedes transaction completion: abort at that seam must fail.
+let captured,abortWrites=true;
+const abortFactory={open(...args){const req=indexedDB.open(...args);req.addEventListener('success',()=>{captured=req.result;const native=captured.transaction.bind(captured);captured.transaction=(...params)=>{const tx=native(...params);if(params[1]==='readwrite'&&abortWrites){const access=tx.objectStore.bind(tx);tx.objectStore=name=>{const object=access(name),put=object.put.bind(object);object.put=(value)=>{const request=put(value);request.addEventListener('success',()=>{if(abortWrites){abortWrites=false;tx.abort();}});return request;};return object;};}return tx;};});return req;}};
+const abortStore=createIndexedDbStore({factory:abortFactory,name:'aborted-library'});await abortStore.init();
+await assert.rejects(()=>abortStore.put({id:'never',title:'Never committed',drawing,updated:1},0),e=>e.code==='blocked');assert.equal((await abortStore.list()).length,0);
+const {forceCloseDatabase}=await import('fake-indexeddb');forceCloseDatabase(captured);await abortStore.put({id:'after-close',title:'Reopened',drawing,updated:2},0);assert.equal((await abortStore.list()).length,1);
+const upgrade=indexedDB.open('aborted-library',2);await new Promise((resolve,reject)=>{upgrade.onsuccess=()=>{upgrade.result.close();resolve();};upgrade.onerror=()=>reject(upgrade.error);});
+console.log('Aborted successful request never reports Saved; forced database close and version-change handoff passed.');
+
+const memory=createMemoryStore();await memory.init();await memory.put({id:'memory',title:'Memory',drawing,updated:1},0);await memory.put({id:'memory',title:'Memory',drawing:{...drawing,song:true},updated:2},1);await memory.recover('memory',1,2);assert.equal((await memory.get('memory')).drawing.song,false);await memory.importBackup(await memory.backup(),()=> 'memory-copy');assert.equal((await memory.list()).length,2);await assert.rejects(()=>memory.put({id:'memory',title:'Old',drawing,updated:3},0),e=>e.code==='conflict');
