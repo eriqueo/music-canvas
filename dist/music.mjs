@@ -212,7 +212,8 @@ export function parseDrawing(value) {
   }
   const strokes = value.strokes.map(stroke => {
     if (!stroke || !Object.hasOwn(PENS,stroke.pen) || !Object.hasOwn(SOUNDS,stroke.sound) || !Array.isArray(stroke.points) || !stroke.points.length || stroke.points.length > LIMITS.points) fail();
-    return { pen: stroke.pen, sound: stroke.sound, points: stroke.points.map(p => { if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) fail(); return { x:p.x,y:p.y }; }) };
+    if(stroke.object!==undefined&&(!Number.isInteger(stroke.object)||stroke.object<1||stroke.object>LIMITS.strokes))fail();
+    return { ...(stroke.object===undefined?{}:{object:stroke.object}), pen: stroke.pen, sound: stroke.sound, points: stroke.points.map(p => { if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) fail(); return { x:p.x,y:p.y }; }) };
   });
   return { version:DRAWING_VERSION, settings:{key:s.key,scale:s.scale,octave:s.octave,range:s.range,bpm:s.bpm,swing:s.swing,divisions:s.divisions,bars:s.bars,parts}, pages:[{strokes}], selectedPage:0, song:false };
 }
@@ -250,4 +251,14 @@ export function wavFile(samples, sampleRate) {
   write(36, 'data'); view.setUint32(40, samples.length * 2, true);
   samples.forEach((sample, i) => view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, sample)) * (sample < 0 ? 32768 : 32767), true));
   return buffer;
+}
+
+// Resume a held voice at its current pitch, retaining future path changes.
+export function remainingEvent(event,position){
+  const elapsed=position-event.time;
+  if(elapsed<=0||elapsed>=event.duration)return null;
+  const path=event.path;
+  const current=path?[...path].reverse().find(p=>p.time<=elapsed):null;
+  return {...event,time:position,duration:event.duration-elapsed,midi:current?.midi??event.midi,
+    ...(path?{path:[{midi:current.midi,time:0,duration:event.duration-elapsed},...path.filter(p=>p.time>elapsed).map(p=>({...p,time:p.time-elapsed}))]}:{})};
 }

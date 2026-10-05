@@ -127,3 +127,20 @@ assert.deepEqual(mirrored[2].points,diagonal.points.map(p=>({x:p.x,y:1-p.y})));
 assert.equal(mirrorStrokes([{...line,points:[{x:.3,y:.5},{x:.7,y:.5}]}],'both').length,1,'Axis-aligned duplicate voices must collapse');
 assert.deepEqual(parseDrawing({...saved,pages:[{strokes:mirrored}],selectedPage:0}).pages[0].strokes,mirrored);
 console.log('Shape contours, reverse drags, round circles, independent oval voices, mirrors, and unchanged saved format passed.');
+const {randomDrawing,eraseObjectAt}=await import('./dist/shapes.mjs');
+const {remainingEvent}=await import('./dist/music.mjs');
+for(let variant=0;variant<4;variant++)for(const shift of [-.06,0,.06]){
+  const drawing=randomDrawing({variant,shift,width:800,height:400}).map(s=>({...s,sound:PENS[s.pen].sound}));
+  assert.ok(drawing.length<=12&&new Set(drawing.map(s=>s.pen)).size>=2);
+  assert.deepEqual(parseDrawing({...saved,pages:[{strokes:drawing}],selectedPage:0}).pages[0].strokes,drawing);
+}
+const grouped=oval.map(points=>({...line,object:1,points})),other={...line,object:2,points:[{x:.2,y:.25},{x:.7,y:.25}]};
+assert.deepEqual(eraseObjectAt([...grouped,other],{x:.45,y:.25},.01,.01),grouped,'Nearest overlapping object alone must be removed');
+assert.deepEqual(eraseObjectAt(grouped,{x:.45,y:.25},.01,.01),[],'Both contours must erase together');
+assert.deepEqual(eraseObjectAt(grouped,{x:.01,y:.01},.01,.01),grouped);
+assert.ok(eraseAt(grouped,{x:.45,y:.25},.02,.02).every(s=>s.object===1),'Brush pieces retain their object identity');
+assert.throws(()=>parseDrawing({...saved,pages:[{strokes:[{...line,object:65}]}],selectedPage:0}));
+const held={time:0,duration:3,midi:60,sound:'flute',path:[{time:0,midi:60,duration:1},{time:1,midi:64,duration:1},{time:2,midi:67,duration:1}]};
+const resumed=remainingEvent(held,1.5);assert.equal(resumed.midi,64);assert.equal(resumed.duration,1.5);assert.deepEqual(resumed.path.map(n=>[n.time,n.midi]),[[0,64],[.5,67]]);
+assert.equal(remainingEvent(held,3),null);assert.equal(remainingEvent(held,0),null);
+console.log('Bounded random presets, object erasing, grouped file compatibility, brush identity and resumed pitch paths passed.');

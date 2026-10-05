@@ -50,6 +50,15 @@ try{
   assert.ok(ready,'App must load');
   assert.ok(await evaluate(`!!document.querySelector('#shape')&&!!document.querySelector('#symmetry')`),'Shape and mirror controls must be wired into the app');
   assert.ok(await evaluate(`Array.from(document.querySelectorAll('[data-pen]')).every(b=>{const r=b.getBoundingClientRect();return r.x>=0&&r.right<=innerWidth&&r.width>=44;})`),'All nine instrument choices must be visible on mobile without horizontal scrolling');
+  for(const [width,height,mobile] of [[1832,858,false],[1280,720,false],[1024,768,false],[390,844,true],[375,812,true]]){
+    await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:mobile?2:1,mobile});await sleep(120);
+    const clipped=await evaluate(`Array.from(document.querySelectorAll('#root button,#root select')).filter(b=>{const r=b.getBoundingClientRect(),p=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return r.x<0||r.y<0||r.right>innerWidth+.5||r.bottom>innerHeight+.5||(!b.disabled&&p&&!b.contains(p));}).map(b=>b.id||b.dataset.pen)`);
+    assert.deepEqual(clipped,[],`Controls must be visible and reachable at ${width}×${height}`);
+    assert.ok(await evaluate(`Array.from(document.querySelectorAll('#root button,#root select')).every(b=>{const r=b.getBoundingClientRect();return r.width>=43.9&&r.height>=43.9;})`),'Controls must retain 44-pixel touch targets');
+    assert.ok(await evaluate('document.documentElement.scrollHeight<=innerHeight&&document.documentElement.scrollWidth<=innerWidth'),'Workspace must fit one screen');
+    if(process.argv[3]&&[1832,390].includes(width)){const capture=await send('Page.captureScreenshot',{format:'png'});await writeFile(process.argv[3].replace(/\.png$/,`-${width}.png`),Buffer.from(capture.data,'base64'));}
+  }
+  await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:2,mobile:true});
   const tap=async selector=>{
     await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
     await sleep(200);
@@ -168,6 +177,25 @@ try{
   });
   assert.equal((await save()).pages[0].strokes.length,0,'Cancelled shape must not be committed');
   assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth'),'New mobile shape controls must fit');
+  await open(emptySong);await control('#shape','oval');await draw([{x:.15,y:.2},{x:.85,y:.8}]);
+  const object=await save();assert.equal(new Set(object.pages[0].strokes.map(s=>s.object)).size,1);
+  await open(object);await control('#erase-mode','object');await draw([{x:.5,y:.2}],false);
+  assert.equal((await save()).pages[0].strokes.length,0,'Whole-object erase must remove both saved oval contours');
+  await tap('#undo');assert.deepEqual((await save()).pages,object.pages);
+  await control('#erase-mode','brush');await draw([{x:.5,y:.2}],false);
+  assert.ok((await save()).pages[0].strokes.length>0,'Brush must leave the rest of the shape');
+  await open({...object,pages:[{strokes:[...object.pages[0].strokes,{pen:'gold',sound:'marimba',object:2,points:[{x:.15,y:.2},{x:.85,y:.2}]}]}]});
+  await control('#erase-mode','object');await draw([{x:.5,y:.2}],false);
+  assert.deepEqual((await save()).pages,object.pages,'One tap must remove only the topmost overlapping object, not replay deletion on release');
+  const beforeRandom=await save();await tap('#random');const generated=await save();assert.ok(generated.pages[0].strokes.length>=4);assert.ok(new Set(generated.pages[0].strokes.map(s=>s.pen)).size>=2);
+  await tap('#undo');assert.deepEqual((await save()).pages,beforeRandom.pages,'Randomize must be one reversible edit');
+  await open({...emptySong,pages:[{strokes:[{pen:'blue',sound:'flute',points:[{x:0,y:.8},{x:1,y:.2}]}]}]});
+  await tap('#play');await sleep(650);await tap('#pause');const held=await evaluate('document.querySelector("#progress").style.width');await sleep(300);
+  assert.equal(await evaluate('document.querySelector("#progress").style.width'),held,'Pause must freeze position');
+  await evaluate('probe.notes=[]');await tap('#play');await sleep(150);assert.ok((await evaluate('probe.notes')).length>0,'Resume must restart the held voice');
+  assert.ok(parseFloat(await evaluate('document.querySelector("#progress").style.width'))>parseFloat(held),'Resume must advance from the held position');
+  await tap('#stop');assert.equal(await evaluate('document.querySelector("#progress").style.width'),'0%');
+  console.log('Viewport bars, random drawings and Undo, saved object erase, brush erase, Pause/resume and Stop passed.');
   console.log('Touch shapes and preview, two-voice oval playback, round circles, shape Undo/Redo, mirrors, resize, save/open, capacity, and cancel passed.');
 }finally{
   socket?.close();chrome.kill();await sleep(300);await rm(profile,{recursive:true,force:true});server.closeAllConnections();await new Promise(r=>server.close(r));

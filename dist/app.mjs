@@ -1,6 +1,6 @@
-import { LIMITS, KEYS, SCALES, INSTRUMENTS, PENS, LAYERS, DRUMS, DRAWING_VERSION, PULSES_PER_LOOP, FREE_TIMING, notesFor, pitchAt, compileLoop, compileSong, audioTimeline, eraseAt, parseDrawing, midiFile, wavFile } from './music.mjs';
+import { LIMITS, KEYS, SCALES, INSTRUMENTS, PENS, LAYERS, DRUMS, DRAWING_VERSION, PULSES_PER_LOOP, FREE_TIMING, notesFor, pitchAt, compileLoop, compileSong, audioTimeline, remainingEvent, eraseAt, parseDrawing, midiFile, wavFile } from './music.mjs';
 const $ = id => document.getElementById(id);
-import {SHAPES,SYMMETRIES,shapePaths,mirrorStrokes} from './shapes.mjs';
+import {SHAPES,SYMMETRIES,shapePaths,mirrorStrokes,randomDrawing,eraseObjectAt} from './shapes.mjs';
 const NOISE_SEED=0x31415926;
 const canvas = $('canvas'), paint = canvas.getContext('2d');
 const settings = { key:0, scale:'pentatonic', octave:3, range:2, bpm:120, swing:0, divisions:FREE_TIMING, bars:1, parts:Object.fromEntries(Object.keys(LAYERS).map(id=>[id,false])) };
@@ -9,7 +9,10 @@ const page={get strokes(){return project.pages[project.index].strokes;},set stro
 let undo = [], redo = [], pen = 'teal', sound = PENS[pen].sound, tool = 'pen', symmetry='off', guides = false, light = false;
 let active, pointerId, width = 1, height = 1, keyboard = { x:.1,y:.5 }, keyboardVisible = false;
 let context, master, noise, voices = new Set(), running = false, playIntent = 0, timer, frame, cycleStart, eventIndex = 0, clickIndex = 0, click = false;
-let visualCycles = [], activeLoop;
+let visualCycles = [], activeLoop, paused;
+const clockLabel=seconds=>`${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')}`;
+function playerPosition(position,loop=pendingLoop){$('elapsed').textContent=clockLabel(position);$('duration').textContent=clockLabel(loop.duration);$('progress').style.width=`${Math.min(100,position/loop.duration*100)}%`;}
+function nextObject(){const used=new Set(page.strokes.map(s=>s.object));for(let id=1;id<=LIMITS.strokes;id++)if(!used.has(id))return id;}
 const colors = Object.fromEntries(Object.entries(PENS).map(([name,p]) => [name,getComputedStyle(document.documentElement).getPropertyValue(p.token).trim()]));
 const pitches = () => notesFor(settings.key,settings.scale,settings.octave,settings.range);
 function compile() { let loop;if(songMode)loop=compileSong(project.pages,settings);else{loop=compileLoop(page.strokes,settings);loop.cues=[{index:project.index,start:0,duration:loop.duration}];}return {...loop,audioEvents:audioTimeline(loop.events)}; }
@@ -21,7 +24,7 @@ function snapshot(){return {pages:project.pages.map(p=>({...p})),index:project.i
 function restore(state){project={pages:state.pages,index:state.index};songMode=state.song;Object.assign(settings,state.settings);syncSettings();}
 function strokeCount(){return project.pages.reduce((n,p)=>n+p.strokes.length,0);}
 function remember() { undo.push(snapshot()); if (undo.length > LIMITS.history) undo.shift(); redo = []; historyState(); }
-function changed() { pendingLoop = compile(); $('stroke-count').textContent = `${page.strokes.length} ${page.strokes.length === 1 ? 'stroke' : 'strokes'}`; $('empty').hidden = page.strokes.length > 0 || !!active || Object.values(settings.parts).some(Boolean); redraw();renderPages();historyState(); if (pendingLoop.limited) status('This drawing reached the playback note limit. Erase some lines to hear more.'); }
+function changed() { pendingLoop = compile(); if(!running){paused=undefined;playerPosition(0);} $('stroke-count').textContent = `${page.strokes.length} ${page.strokes.length === 1 ? 'stroke' : 'strokes'}`; $('empty').hidden = page.strokes.length > 0 || !!active || Object.values(settings.parts).some(Boolean); redraw();renderPages();historyState(); if (pendingLoop.limited) status('This drawing reached the playback note limit. Erase some lines to hear more.'); }
 function paintStrokes(ctx,strokes,w,h,thickness){
   ctx.globalAlpha=1;ctx.lineWidth=thickness;ctx.lineCap='round';ctx.lineJoin='round';
   for(const stroke of strokes){ctx.strokeStyle=colors[stroke.pen];ctx.fillStyle=colors[stroke.pen];ctx.beginPath();stroke.points.forEach((p,i)=>i?ctx.lineTo(p.x*w,p.y*h):ctx.moveTo(p.x*w,p.y*h));if(stroke.points.length===1){const p=stroke.points[0];ctx.arc(p.x*w,p.y*h,Math.max(2,thickness*.75),0,Math.PI*2);ctx.fill();}else ctx.stroke();}
@@ -34,7 +37,7 @@ function renderPages(){
 }
 function draftStrokes(){
   if(!active)return [];
-  return mirrorStrokes(shapePaths(tool,active.points,{width,height}).map(points=>({pen:active.pen,sound:active.sound,points})),symmetry);
+  return mirrorStrokes(shapePaths(tool,active.points,{width,height}).map(points=>({pen:active.pen,sound:active.sound,object:active.object,points})),symmetry);
 }
 function gestureSize(kind=tool){return (SHAPES[kind]?.strokes||0)*SYMMETRIES[symmetry].copies;}
 function redraw() {
@@ -71,6 +74,8 @@ function syncSettings() { for (const [id,name] of [['key','key'],['scale','scale
 function selectTool(value) { finish();tool = value; $('shape').value=tool==='erase'?'pen':tool;$('pen').setAttribute('aria-pressed',String(tool==='pen')); $('eraser').setAttribute('aria-pressed',String(tool==='erase')); $('paper-wrap').classList.toggle('erasing',tool==='erase'); }
 $('pen').onclick = () => selectTool('pen'); $('eraser').onclick = () => selectTool('erase');
 $('shape').onchange=()=>selectTool($('shape').value);
+$('erase-mode').onchange=()=>selectTool('erase');
+$('random').onclick=()=>{finish();const strokes=randomDrawing({variant:Math.floor(Math.random()*4),shift:(Math.random()-.5)*.12,width,height}).map(s=>({...s,sound:PENS[s.pen].sound}));if(strokeCount()-page.strokes.length+strokes.length>LIMITS.strokes){status('Not enough room. Remove another loop first.');return;}stop();remember();page.strokes=strokes;changed();status('A new musical drawing. Undo restores your previous loop.');};
 $('symmetry').onchange=()=>{finish();symmetry=$('symmetry').value;redraw();};
 async function audio() {
   // Media playback must remain audible when an iPhone's ringer is set to silent.
@@ -113,8 +118,11 @@ function renderEvent(ctx,destination,e,when,track,buffer){
 let previewMidi = null, previewTime = -Infinity;
 function preview(p) { const note = pitchAt(p.y,pitches()); $('pitch').textContent = `${note.label}${note.octave}`; if (!context || context.state !== 'running' || running) return; const now = context.currentTime; if (note.midi===previewMidi && now-previewTime<.14 || now-previewTime<.045) return; previewMidi=note.midi; previewTime=now; synth(context,master,note.midi,now,.09,sound,.07,true); }
 function point(event) { const r = canvas.getBoundingClientRect(); return { x:Math.max(0,Math.min(1,(event.clientX-r.left)/r.width)), y:Math.max(0,Math.min(1,(event.clientY-r.top)/r.height)) }; }
+function erase(p){return $('erase-mode').value==='object'?eraseObjectAt(page.strokes,p,14/width,14/height):eraseAt(page.strokes,p,14/width,14/height,LIMITS.strokes-strokeCount()+page.strokes.length);}
 function drawPoint(p) {
-  if (tool==='erase') page.strokes = eraseAt(page.strokes,p,14/width,14/height,LIMITS.strokes-strokeCount()+page.strokes.length);
+  // Whole-object erase selects once on pointerdown, so a tap cannot delete
+  // another overlapping object again on pointerup. Brush follows the pointer.
+  if (tool==='erase') {if($('erase-mode').value==='brush')page.strokes=erase(p);}
   else if(active&&tool!=='pen'){active.points=[active.points[0],p];preview(p);}
   else if (active) { const last = active.points.at(-1); if (Math.hypot((p.x-last.x)*width,(p.y-last.y)*height)<1.5) return; if (active.points.length>=LIMITS.points) { status('Stroke limit reached. Lift your pen to start another line.'); return; } active.points.push(p); preview(p); }
   redraw();
@@ -125,7 +133,7 @@ canvas.addEventListener('pointerdown',event => {
   // Reserve every contour and reflected copy; at capacity reject the entire gesture.
   if (tool!=='erase' && strokeCount()+gestureSize()>LIMITS.strokes) { status('Not enough room for the whole shape. Erase a line or clear a loop.'); return; }
   event.preventDefault(); keyboardVisible=false; canvas.focus({preventScroll:true}); pointerId=event.pointerId; canvas.setPointerCapture(event.pointerId); remember(); const p=point(event);
-  if (tool!=='erase') active={pen,sound,points:[p]}; else page.strokes=eraseAt(page.strokes,p,14/width,14/height,LIMITS.strokes-strokeCount()+page.strokes.length);
+  if (tool!=='erase') active={pen,sound,object:nextObject(),points:[p]}; else page.strokes=erase(p);
   $('empty').hidden=true; status(''); audio().then(()=>preview(p)).catch(()=>status('Drawing works, but sound could not start. Try Play and check your browser audio.')); redraw();
 });
 canvas.addEventListener('pointermove',event => { if (pointerId!==event.pointerId) return; event.preventDefault(); const samples=event.getCoalescedEvents?.() || []; for (const e of samples.length?samples:[event]) drawPoint(point(e)); });
@@ -142,15 +150,16 @@ $('page-earlier').onclick=()=>movePage(-1);$('page-later').onclick=()=>movePage(
 $('page-delete').onclick=()=>{finish();if(project.pages.length===1)return;stop();remember();project.pages=project.pages.filter((_,index)=>index!==project.index);project.index=Math.min(project.index,project.pages.length-1);changed();status('Loop removed. Undo brings it back.');};
 $('song').onclick=()=>{finish();stop();remember();songMode=!songMode;changed();};
 $('guides').onclick=()=>{guides=!guides;$('guides').setAttribute('aria-pressed',String(guides));redraw();};
-$('paper').onclick=()=>{light=!light;$('paper-wrap').classList.toggle('light',light);$('paper').setAttribute('aria-pressed',String(light));$('paper').textContent=light?'Dark paper':'Light paper';redraw();};
+$('paper').onclick=()=>{light=!light;$('paper-wrap').classList.toggle('light',light);$('paper').setAttribute('aria-pressed',String(light));$('paper').title=light?'Dark paper':'Light paper';$('paper').setAttribute('aria-label',$('paper').title);redraw();};
 canvas.addEventListener('keydown',event=>{
   const moves={ArrowRight:[.01,0],ArrowLeft:[-.01,0],ArrowUp:[0,-.01],ArrowDown:[0,.01]};
   if(moves[event.key]) { event.preventDefault(); keyboardVisible=true; const old={...keyboard},[dx,dy]=moves[event.key]; keyboard={x:Math.max(0,Math.min(1,old.x+dx)),y:Math.max(0,Math.min(1,old.y+dy))};
-    if(event.shiftKey && strokeCount()+gestureSize('pen')<=LIMITS.strokes) { remember();page.strokes=[...page.strokes,...mirrorStrokes([{pen,sound,points:[old,{...keyboard}]}],symmetry)];changed();audio().then(()=>preview(keyboard)).catch(()=>status('Sound could not start.')); } else redraw();
-  } else if(event.key==='Enter' && strokeCount()+gestureSize('pen')<=LIMITS.strokes) {event.preventDefault();remember();page.strokes=[...page.strokes,...mirrorStrokes([{pen,sound,points:[{...keyboard}]}],symmetry)];changed();audio().then(()=>preview(keyboard)).catch(()=>status('Sound could not start.'));}
+    if(event.shiftKey && strokeCount()+gestureSize('pen')<=LIMITS.strokes) { remember();page.strokes=[...page.strokes,...mirrorStrokes([{pen,sound,object:nextObject(),points:[old,{...keyboard}]}],symmetry)];changed();audio().then(()=>preview(keyboard)).catch(()=>status('Sound could not start.')); } else redraw();
+  } else if(event.key==='Enter' && strokeCount()+gestureSize('pen')<=LIMITS.strokes) {event.preventDefault();remember();page.strokes=[...page.strokes,...mirrorStrokes([{pen,sound,object:nextObject(),points:[{...keyboard}]}],symmetry)];changed();audio().then(()=>preview(keyboard)).catch(()=>status('Sound could not start.'));}
 });
 canvas.addEventListener('blur',()=>{keyboardVisible=false;redraw();});
-function stop() { playIntent++; running=false;clearInterval(timer);cancelAnimationFrame(frame);visualCycles=[];for(const voice of voices){try{voice.stop();}catch{}}voices.clear();$('play').textContent='▶ Play';$('play').setAttribute('aria-pressed','false');$('playhead').style.display='none'; }
+function stop() { playIntent++; running=false;clearInterval(timer);cancelAnimationFrame(frame);visualCycles=[];for(const voice of voices){try{voice.stop();}catch{}}voices.clear();paused=undefined;$('pause').disabled=true;playerPosition(0);$('play').textContent='▶';$('play').setAttribute('aria-pressed','false');$('playhead').style.display='none'; }
+function pause(){if(!running)return;const now=context.currentTime;const cycle=[...visualCycles].reverse().find(c=>c.start<=now)||visualCycles[0];const saved={loop:cycle.loop,position:Math.max(0,Math.min(cycle.loop.duration,now-cycle.start))};stop();paused=saved;playerPosition(saved.position,saved.loop);$('playhead').style.display='block';status('Paused. Play resumes; Stop returns to the start.');}
 function schedule() {
   if(!running)return;
   const now=context.currentTime,horizon=now+.1;
@@ -172,9 +181,10 @@ function schedule() {
     visualCycles.push({start:cycleStart,loop:activeLoop});if(visualCycles.length>2)visualCycles.shift();
   }
 }
-function animate() {if(!running)return;const now=context.currentTime;while(visualCycles.length>1 && visualCycles[1].start<=now)visualCycles.shift();const cycle=visualCycles[0],position=Math.max(0,now-cycle.start);const cue=[...cycle.loop.cues].reverse().find(c=>c.start<=position)||cycle.loop.cues[0];if(project.index!==cue.index){finish();project.index=cue.index;changed();}const fraction=Math.max(0,Math.min(1,(position-cue.start)/cue.duration));$('playhead').style.left=`${fraction*100}%`;frame=requestAnimationFrame(animate);}
-async function start() { const intent=++playIntent; try{await audio();if(intent!==playIntent || document.hidden)return;finish();running=true;activeLoop=pendingLoop;cycleStart=context.currentTime+.04;eventIndex=0;clickIndex=0;visualCycles=[{start:cycleStart,loop:activeLoop}];$('play').textContent='Ⅱ Pause';$('play').setAttribute('aria-pressed','true');$('playhead').style.display='block';status('');schedule();timer=setInterval(schedule,25);animate();}catch{status('Sound could not start. Check your browser audio settings and try Play again.');} }
-$('play').onclick=()=>running?stop():start();
+function animate() {if(!running)return;const now=context.currentTime;while(visualCycles.length>1 && visualCycles[1].start<=now)visualCycles.shift();const cycle=visualCycles[0],position=Math.max(0,now-cycle.start);const cue=[...cycle.loop.cues].reverse().find(c=>c.start<=position)||cycle.loop.cues[0];if(project.index!==cue.index){finish();project.index=cue.index;changed();}playerPosition(position,cycle.loop);const fraction=Math.max(0,Math.min(1,(position-cue.start)/cue.duration));$('playhead').style.left=`${fraction*100}%`;frame=requestAnimationFrame(animate);}
+async function start() { const intent=++playIntent; try{await audio();if(intent!==playIntent || document.hidden)return;finish();const saved=paused;paused=undefined;running=true;activeLoop=saved?.loop??pendingLoop;const position=saved?.position??0;cycleStart=context.currentTime+.04-position;eventIndex=activeLoop.audioEvents.findIndex(e=>e.time>=position);if(eventIndex<0)eventIndex=activeLoop.audioEvents.length;clickIndex=Math.ceil(position*activeLoop.bpm/60);if(position>0)for(const e of activeLoop.audioEvents){const remaining=remainingEvent(e,position);if(remaining)renderEvent(context,master,remaining,context.currentTime+.04,true,noise);}visualCycles=[{start:cycleStart,loop:activeLoop}];$('pause').disabled=false;$('play').textContent='▶';$('play').setAttribute('aria-pressed','true');$('playhead').style.display='block';status('');schedule();timer=setInterval(schedule,25);animate();}catch{status('Sound could not start. Check your browser audio settings and try Play again.');} }
+$('play').onclick=()=>running?pause():start();
+$('pause').onclick=pause;$('stop').onclick=stop;
 $('restart').onclick=()=>{const resume=running;stop();if(resume)start();};
 $('click').onclick=()=>{click=!click;$('click').setAttribute('aria-pressed',String(click));};
 $('volume').oninput=()=>{if(master)master.gain.setTargetAtTime(Number($('volume').value)/100,context.currentTime,.015);};
@@ -190,5 +200,5 @@ $('file').onchange=async()=>{const file=$('file').files[0];if(!file)return;try{i
 $('midi').onclick=()=>{finish();download(midiFile(pendingLoop,settings.bpm),'audio/midi','mid');status('MIDI exported.');};
 $('wav').onclick=async()=>{finish();const b=$('wav');b.disabled=true;b.textContent='Rendering…';status('Preparing audio…');try{const Offline=window.OfflineAudioContext||window.webkitOfflineAudioContext;if(!Offline)throw new Error('OFFLINE_AUDIO_UNAVAILABLE');const loop=pendingLoop,rate=44100;const tail=Math.max(...Object.values(INSTRUMENTS).map(i=>i.release));const ctx=new Offline(1,Math.ceil((loop.duration+tail+.05)*rate),rate),gain=output(ctx,Number($('volume').value)/100),buffer=makeNoise(ctx,NOISE_SEED);for(const e of loop.audioEvents)renderEvent(ctx,gain,e,e.time,false,buffer);const rendered=await ctx.startRendering();download(wavFile(rendered.getChannelData(0),rate),'audio/wav','wav');status('WAV exported.');}catch{status('Audio export failed. Try MIDI or a browser with offline audio support.');}finally{b.disabled=false;b.textContent='WAV';}};
 document.addEventListener('visibilitychange',()=>{if(document.hidden){finish();if(running){stop();status('Playback paused while you were away.');}}});
-document.addEventListener('keydown',event=>{if(event.target.closest('input,select,dialog'))return;if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();event.shiftKey?$('redo').click():$('undo').click();return;}if(event.code==='Space'&&!event.repeat&&!event.target.closest('button')){event.preventDefault();running?stop():start();}if(event.key.toLowerCase()==='p')selectTool('pen');if(event.key.toLowerCase()==='e')selectTool('erase');});
+document.addEventListener('keydown',event=>{if(event.target.closest('input,select,dialog'))return;if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();event.shiftKey?$('redo').click():$('undo').click();return;}if(event.code==='Space'&&!event.repeat&&!event.target.closest('button')){event.preventDefault();running?pause():start();}if(event.key.toLowerCase()==='p')selectTool('pen');if(event.key.toLowerCase()==='e')selectTool('erase');});
 syncSettings();changed();

@@ -42,3 +42,30 @@ export function mirrorStrokes(strokes,mode){
   }
   return result;
 }
+
+// Bounded preset variations: editable vectors, at most twelve contours.
+export function randomDrawing({variant,shift,width,height}){
+  const recipes=[
+    [['oval',.12,.22,.42,.72,'blue'],['triangle',.52,.18,.84,.8,'gold']],
+    [['diamond',.15,.15,.46,.85,'rose'],['oval',.54,.32,.88,.68,'green']],
+    [['triangle',.1,.2,.38,.75,'copper'],['triangle',.38,.2,.66,.75,'teal'],['triangle',.66,.2,.94,.75,'gold']],
+    [['oval',.12,.12,.88,.88,'coral'],['line',.12,.72,.88,.28,'cream'],['line',.12,.28,.88,.72,'blue']],
+  ];
+  return recipes[variant].flatMap(([kind,x1,y1,x2,y2,pen],index)=>shapePaths(kind,[{x:x1,y:y1+shift},{x:x2,y:y2+shift}],{width,height}).map(points=>({pen,object:index+1,points})));
+}
+
+export function eraseObjectAt(strokes,point,radiusX,radiusY){
+  let hit,nearest=1;
+  for(const stroke of strokes){
+    for(let i=0;i<stroke.points.length;i++){
+      const a=stroke.points[i],b=stroke.points[Math.min(i+1,stroke.points.length-1)];
+      const ax=(a.x-point.x)/radiusX,ay=(a.y-point.y)/radiusY,dx=(b.x-a.x)/radiusX,dy=(b.y-a.y)/radiusY;
+      const length=dx*dx+dy*dy,t=length?Math.max(0,Math.min(1,-(ax*dx+ay*dy)/length)):0;
+      const distance=(ax+t*dx)**2+(ay+t*dy)**2;
+      // Equal-distance crossings select the topmost contour despite float noise.
+      if(distance<=1&&distance<=nearest+1e-12){nearest=distance;hit=stroke;}
+    }
+  }
+  if(!hit)return strokes;
+  return strokes.filter(s=>hit.object===undefined?s!==hit:s.object!==hit.object);
+}

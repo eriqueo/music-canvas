@@ -11,6 +11,15 @@ use the playback audio session so the silent switch does not mute the instrument
 Each loop has eight beats, matching the reference: 120 BPM gives four seconds.
 Independent dot buttons add bass, drums, and a scale-aware arpeggio.
 
+The workspace fits one viewport: teal drawing tools on the left, gold music and
+song controls on the right, and a copper player below. Phone layouts stack compact
+bars around the canvas; short screens scroll inside the tool bars. Pause preserves
+the audio-clock position and remaining held-note pitch changes; Stop resets it.
+Surprise me replaces the selected loop with one of four varied, multicolor presets.
+It leaves other pages intact, rejects changes at capacity, and records one Undo.
+Brush erase cuts lines. Object erase selects the nearest contour once per tap and
+removes its full gesture, including mirrored copies. Old ungrouped lines erase alone.
+
 Shape tools borrow Kid Pix's drag-preview interaction: Line, Circle, Oval,
 Rectangle, Triangle, and Diamond. Drag from one corner to the opposite corner;
 circles stay round in screen pixels. Outlines become ordinary stroke data.
@@ -30,6 +39,8 @@ Run `node test.mjs` for geometry, note generation, drawing files, and export che
 Run `node browser-test.mjs` for touch-drawn arpeggios and rendered instrument audio
 in Chromium, plus page editing, saved song round trips, legacy imports, song playback,
 backing audio, touch shapes, circle proportions, mirrored Undo, capacity, and cancellation.
+It also checks control bounds and hit targets at desktop and phone sizes, preset
+Undo, saved-object erasing, brush erasing, Pause/resume, and Stop.
 Physical iPhone output remains unverified on this host.
 Set `CHROMIUM_BINARY` if Chromium lives outside the NixOS system path.
 Run `bash deploy.sh` on hwc-work to publish through the existing `hwc-publish` service.
@@ -40,7 +51,10 @@ Project work uses `ws create --resume music-grid /home/eric/600_apps/music-canva
 
 Drawings are ephemeral browser state. Save song produces an editable version-3 JSON
 file managed by the user. Version-1 and version-2 files remain readable and retain
-their explicit instruments. No server database, hosted service, or external runtime
+their explicit instruments. Version 3 accepts an optional per-page stroke object
+number (1–64) to preserve gesture groups. Missing groups remain independent strokes;
+older readers can ignore the field while preserving the drawable contours and audio.
+No server database, hosted service, or external runtime
 asset is required. MIDI uses the compiled scale notes with instrument programs and
 percussion channel 10; live audio and WAV share the sustained voice timeline.
 
