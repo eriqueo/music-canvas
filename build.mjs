@@ -43,7 +43,7 @@ if(result!=='reload-requested'){
 })();
 `);
 const assets=(await readdir(output)).sort();
-const result=await generateSW({globDirectory:output,globPatterns:['**/*.{html,css,mjs,png,json,webmanifest,txt}'],swDest:output+'/sw.js',inlineWorkboxRuntime:true,cleanupOutdatedCaches:true,clientsClaim:false,skipWaiting:false,navigateFallback:'/index.html',navigateFallbackAllowlist:[/^\/$/,/^\/draw$/, /^\/songs$/],manifestTransforms:[async manifest=>({manifest:await Promise.all(manifest.map(async entry=>({...entry,integrity:'sha384-'+hash(await readFile(`${output}/${entry.url}`))}))),warnings:[]})]});
+const result=await generateSW({globDirectory:output,globPatterns:['**/*.{html,css,mjs,png,json,webmanifest,txt}'],swDest:output+'/sw.js',inlineWorkboxRuntime:true,sourcemap:false,cleanupOutdatedCaches:true,clientsClaim:false,skipWaiting:false,navigateFallback:'/index.html',navigateFallbackAllowlist:[/^\/$/,/^\/draw$/, /^\/songs$/],manifestTransforms:[async manifest=>({manifest:await Promise.all(manifest.map(async entry=>({...entry,integrity:'sha384-'+hash(await readFile(`${output}/${entry.url}`))}))),warnings:[]})]});
 let sw=await readFile(output+'/sw.js','utf8');await writeFile(output+'/sw.js',helper+sw);
 // One generated list: used to check precache coverage, never hand-maintained.
 if(assets.some(n=>!sw.includes(n)))throw new Error('Incomplete offline manifest');
