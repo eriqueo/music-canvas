@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Music Grid — a visual instrument</title>
+  <meta name="description" content="Make a melody by drawing notes. Explore scales, loop your ideas, and export your music as WAV or MIDI.">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d2021'/%3E%3Cg fill='%23cf995f'%3E%3Crect x='6' y='17' width='5' height='9' rx='2'/%3E%3Crect x='14' y='6' width='5' height='20' rx='2'/%3E%3Crect x='22' y='12' width='5' height='14' rx='2'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="palette.css"><link rel="stylesheet" href="theme.css"><link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+<main id="root">
+  <header class="masthead"><a class="identity" href="/" aria-label="Music Grid home"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>music grid<span class="period">.</span></a><button id="help" class="quiet">How to play <span class="help-mark">?</span></button></header>
+  <section class="workspace" aria-label="Music instrument">
+    <div class="workspace-heading"><div><p class="eyebrow">YOUR SOUND, ONE NOTE AT A TIME</p><h1>Make room for a melody<span class="period">.</span></h1></div><span class="loop-label">01 / LOOP STUDIO</span></div>
+    <div class="toolbar">
+      <label>KEY<select id="key" aria-label="Key"></select></label>
+      <label class="scale-field">SCALE<select id="scale" aria-label="Scale"></select></label>
+      <div class="octave-field"><span class="field-label">OCTAVE</span><div class="stepper"><button id="octave-down" aria-label="Lower octave">−</button><output id="octave">4</output><button id="octave-up" aria-label="Raise octave">+</button></div></div>
+      <label class="sound-field">SOUND<select id="sound" aria-label="Sound"></select></label>
+      <div class="toolbar-right"><button id="undo" class="quiet" disabled>Undo</button><button id="clear" class="quiet">Clear grid</button></div>
+    </div>
+    <div class="grid-shell"><div class="note-labels" id="labels" aria-hidden="true"></div><div class="grid-scroll"><div id="grid" role="group" aria-label="Melody grid"></div><div id="steps" class="steps" aria-hidden="true"></div></div></div>
+    <div class="grid-footer"><span><span class="tiny-square" aria-hidden="true"></span>Tap to add a note. Drag to draw.</span><span id="note-count">0 notes</span></div>
+    <div class="transport">
+      <button id="play" class="play-button"><span id="play-icon" aria-hidden="true">▶</span><span id="play-label">Play loop</span></button>
+      <button id="reset" class="icon-button" aria-label="Restart loop" title="Restart loop">↺</button>
+      <div class="tempo"><label for="tempo">TEMPO <output id="bpm">100</output> <span>BPM</span></label><input id="tempo" type="range" min="40" max="200" value="100" aria-label="Tempo"></div>
+      <label class="swing">SWING<select id="swing"><option value="0">Straight</option><option value="0.2">Light · 20%</option><option value="0.4">Loose · 40%</option></select></label>
+      <button id="click" class="toggle" aria-pressed="false"><span class="toggle-dot"></span>Click</button>
+      <div class="volume"><label for="volume" class="sr-only">Volume</label><span aria-hidden="true">♪</span><input id="volume" type="range" min="0" max="100" value="65" aria-label="Volume"></div>
+    </div>
+  </section>
+  <section class="below"><div class="idea"><p class="eyebrow">A LITTLE INSPIRATION</p><button id="starter" class="preset-button">A wandering melody <span class="preset-meta">16 steps · try it in minor</span></button></div><div class="exports"><p class="eyebrow">TAKE IT WITH YOU</p><div><button id="wav" class="export-button">Export WAV <span aria-hidden="true">↓</span></button><button id="midi" class="export-button">Export MIDI <span aria-hidden="true">↓</span></button></div></div></section>
+  <footer><span>A small space to play with music.</span><span><kbd>space</kbd> play / pause</span></footer>
+  <p id="status" role="status" aria-live="polite"></p>
+</main>
+<dialog id="help-dialog"><div class="dialog-heading"><h2>A few notes to get started.</h2><button id="close-help" class="icon-button" aria-label="Close help">×</button></div><p>Each column is a moment in time. Each row is a note in your chosen scale.</p><ol><li>Tap a square to add or remove a note. Drag across the grid to draw.</li><li>Press Play loop, or use the space bar. The loop repeats every four beats.</li><li>Change the key or scale to hear the same pattern in a new way.</li><li>Export WAV for audio, or MIDI to keep working in your music software.</li></ol><p class="dialog-note">Notes stay on this page until you reload. Export a loop to keep it. Playback pauses when you leave the tab.</p></dialog>
+<script type="module" src="app.mjs"></script>
+</body></html>
