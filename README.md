@@ -4,8 +4,8 @@ Self-hosted drawing instrument on hwc-work. Canvas strokes keep normalized coord
 horizontal position sets time and vertical position selects a pitch in the current scale.
 Completed strokes are immutable and keep their pen color and selected sound.
 Free timing follows each pitch crossing along the stroke without a timing grid.
-The optional timing settings quantize playback. Nine pen colors select Keys, Pluck,
-Bell, Marimba, Flute, Strings, Chime, Bass, and 8-bit. Sustained instruments keep one
+The optional timing settings quantize playback. Ten pen colors select Keys, Pluck,
+Bell, Marimba, Flute, Strings, Chime, Bass, 8-bit, and Organ. Sustained instruments keep one
 voice through contiguous pitch changes in Free timing. Supported iPhones
 use the playback audio session so the silent switch does not mute the instrument.
 Each loop has eight beats, matching the reference: 120 BPM gives four seconds.
@@ -13,7 +13,7 @@ Independent dot buttons add bass, drums, and a scale-aware arpeggio.
 
 Kid Pix-inspired picture buttons open visual choices for scenes, shapes, mirrors,
 pitch snapping, views, and erasers. Scene tiles preview the actual editable vectors.
-The nine colored pens show instrument pictures and short names. Main controls have
+The ten colored pens show instrument pictures and short names. Main controls have
 48-pixel or larger touch targets; Tune holds the detailed music settings and Share
 holds WAV and MIDI. Drawing, song files, and audio use the same controls underneath.
 

@@ -16,6 +16,7 @@ export const INSTRUMENTS = {
   strings: { label:'Strings', wave:'sawtooth', harmonics:[0,1,.7,.5,.4,.3,.2], sustain:.85, attack:.12, release:.25, channel:5, program:48 },
   chime: { label:'Chime', wave:'sine', harmonics:[0,1,0,0,.6,0,0,.3], sustain:.2, attack:.006, release:.35, channel:6, program:10 },
   bass: { label:'Bass', wave:'sine', harmonics:[0,1,.45,.12], sustain:.75, attack:.02, release:.1, channel:7, program:32 },
+  organ: { label:'Organ', wave:'sine', harmonics:[0,1,.7,.85,.35,.25,.12], sustain:.95, attack:.025, release:.1, channel:11, program:19 },
   chip: { label:'8-bit', wave:'square', harmonics:null, sustain:.8, attack:.008, release:.06, channel:8, program:80 },
 };
 // Permanent version-1 compatibility: explicit sounds on old strokes stay intact.
@@ -35,6 +36,7 @@ export const PENS = Object.fromEntries(Object.entries({
   green:{token:'--color-green',sound:'chime'},
   slate:{token:'--color-base-500',sound:'bass'},
   cream:{token:'--color-cream-100',sound:'chip'},
+  wood:{token:'--color-copper-dim',sound:'organ'},
 }).map(([id,pen])=>[id,{...pen,label:INSTRUMENTS[pen.sound].label}]));
 export const LAYERS={bass:{label:'Bass',dots:'•',token:'--color-green'},drums:{label:'Drums',dots:'••',token:'--color-gold'},arpeggio:{label:'Arpeggio',dots:'•••',token:'--color-blue'}};
 export const DRAWING_VERSION=3;
@@ -182,7 +184,7 @@ export function compileSong(pages,settings){
 export function audioTimeline(events){
   const result=[],held=new Map();
   for(const e of events){
-    if(e.lane===undefined||!['flute','strings','bass','chip'].includes(e.sound)){result.push(e);continue;}
+    if(e.lane===undefined||!['flute','strings','bass','chip','organ'].includes(e.sound)){result.push(e);continue;}
     const key=`${e.page??0}:${e.lane}`,last=held.get(key);
     if(last&&Math.abs(last.time+last.duration-e.time)<1e-8){last.path.push({midi:e.midi,time:e.time-last.time,duration:e.duration});last.duration=e.time+e.duration-last.time;}
     else{const voice={...e,path:[{midi:e.midi,time:0,duration:e.duration}]};held.set(key,voice);result.push(voice);}

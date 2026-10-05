@@ -48,8 +48,8 @@ assert.doesNotMatch(readFileSync(new URL('./dist/app.mjs',import.meta.url),'utf8
 console.log('Canvas, continuous strokes, held notes, swing, erasing, drawing format, MIDI, and WAV passed.');
 const {compileLoop}=await import('./dist/music.mjs');
 assert.equal(typeof compileLoop,'function','Drawing and backing parts need one shared timeline');
-assert.equal(Object.keys(PENS).length,9);
-assert.equal(new Set(Object.values(PENS).map(p=>p.sound)).size,9);
+assert.equal(Object.keys(PENS).length,10);
+assert.equal(new Set(Object.values(PENS).map(p=>p.sound)).size,10);
 for(const p of Object.values(PENS))assert.ok(INSTRUMENTS[p.sound]);
 for(const part of ['bass','drums','arpeggio']){
   const backing=compileLoop([],{...settings,parts:{bass:false,drums:false,arpeggio:false,[part]:true}});
@@ -68,7 +68,7 @@ assert.deepEqual(newDrawing.settings.parts,{bass:true,drums:false,arpeggio:true}
 assert.equal(parsed.pages[0].strokes[0].sound,'sine'); // Old files retain their explicit instrument.
 assert.deepEqual(parsed.settings.parts,{bass:false,drums:false,arpeggio:false});
 assert.throws(()=>parseDrawing({...newDrawing,settings:{...newDrawing.settings,parts:{bass:'true',drums:false,arpeggio:false}}}));
-console.log('Nine pen instruments, independent backing parts, and legacy drawing compatibility passed.');
+console.log('Ten pen instruments, independent backing parts, and legacy drawing compatibility passed.');
 const songSettings={...settings,bpm:120,divisions:96,parts:{bass:false,drums:false,arpeggio:false}};
 assert.equal(compileLoop([line],songSettings).duration,4,'120 BPM must match the reference four-second loop');
 const eighths=compileLoop([line],{...songSettings,divisions:8});assert.equal(eighths.ticks.length,16);assert.equal(eighths.ticks[1].time,.25);assert.equal(eighths.duration,4);

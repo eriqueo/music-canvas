@@ -49,13 +49,14 @@ try{
   for(let i=0;i<100;i++){ready=await evaluate(`!!document.querySelector('#pens')?.children.length`);if(ready)break;await sleep(100);}
   assert.ok(ready,'App must load');
   assert.ok(await evaluate(`!!document.querySelector('#shape')&&!!document.querySelector('#symmetry')`),'Shape and mirror controls must be wired into the app');
-  assert.ok(await evaluate(`Array.from(document.querySelectorAll('[data-pen]')).every(b=>{const r=b.getBoundingClientRect();return r.x>=0&&r.right<=innerWidth&&r.width>=44;})`),'All nine instrument choices must be visible on mobile without horizontal scrolling');
+  assert.ok(await evaluate(`Array.from(document.querySelectorAll('[data-pen]')).every(b=>{const r=b.getBoundingClientRect();return r.x>=0&&r.right<=innerWidth&&r.width>=44;})`),'All ten instrument choices must be visible on mobile without horizontal scrolling');
   for(const [width,height,mobile] of [[1832,858,false],[1280,720,false],[1024,768,false],[390,844,true],[375,812,true]]){
     await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:mobile?2:1,mobile});await sleep(120);
     const clipped=await evaluate(`Array.from(document.querySelectorAll('#root button,#root select')).filter(b=>{const r=b.getBoundingClientRect(),p=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return r.x<0||r.y<0||r.right>innerWidth+.5||r.bottom>innerHeight+.5||(!b.disabled&&p&&!b.contains(p));}).map(b=>b.id||b.dataset.pen)`);
     assert.deepEqual(clipped,[],`Controls must be visible and reachable at ${width}×${height}`);
     assert.ok(await evaluate(`Array.from(document.querySelectorAll('#root button,#root select')).every(b=>{const r=b.getBoundingClientRect();return r.width>=47.9&&r.height>=47.9;})`),'Controls must retain 48-pixel touch targets');
     assert.ok(await evaluate('document.documentElement.scrollHeight<=innerHeight&&document.documentElement.scrollWidth<=innerWidth'),'Workspace must fit one screen');
+    assert.ok(await evaluate(`(()=>{const fields=document.querySelector('.drawing-fields').getBoundingClientRect(),pens=document.querySelector('#pens').getBoundingClientRect(),name=document.querySelector('#instrument-name').getBoundingClientRect(),tools=document.querySelector('.tool-group').getBoundingClientRect();return pens.top-fields.bottom>=15&&tools.top-name.bottom>=15;})()`),'Art sections must have visible space between them');
     if(process.argv[3]&&[1832,390].includes(width)){const capture=await send('Page.captureScreenshot',{format:'png'});await writeFile(process.argv[3].replace(/\.png$/,`-${width}.png`),Buffer.from(capture.data,'base64'));}
   }
   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:2,mobile:true});
@@ -106,7 +107,7 @@ try{
     await draw([{x:.1,y:.9},{x:.12,y:.1}]);
     await evaluate('probe.notes=[];probe.ramps=[]');await tap('#play');await sleep(750);await tap('#play');
     const notes=await evaluate('probe.notes.map(f=>Math.round(69+12*Math.log2(f/440)))');
-    if(['flute','strings','bass','chip'].includes(sound)){
+    if(['flute','strings','bass','chip','organ'].includes(sound)){
       assert.equal(notes.length,1,`${sound} must hold one voice along the line`);
       assert.deepEqual(await evaluate('probe.ramps.map(f=>Math.round(69+12*Math.log2(f/440)))'),[52,55,57,60,62,64,67,69],`${sound} must follow all pitch changes`);
     }else assert.deepEqual(notes,[50,52,55,57,60,62,64,67,69],`${sound}: touch diagonal must reach every pitch`);
@@ -121,16 +122,16 @@ try{
     const fingerprint=await evaluate(`(async()=>{const bytes=await probe.wav.arrayBuffer(),view=new DataView(bytes);let energy=0;for(let i=44;i<bytes.byteLength;i+=2)energy+=Math.abs(view.getInt16(i,true));return {energy,hash:Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).join(',')};})()`);
     assert.ok(fingerprint.energy>100000,`${sound} must render audible samples`);fingerprints.push(fingerprint.hash);
   }
-  assert.equal(new Set(fingerprints).size,9,'Each color must render a distinct instrument');
+  assert.equal(new Set(fingerprints).size,Object.keys(PENS).length,'Each color must render a distinct instrument');
   assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth'),'Mobile controls must fit');
-  console.log('Nine audible instruments, mobile drawing, sustained pitch glide, and playback category passed.');
+  console.log('Ten audible instruments, mobile drawing, sustained pitch glide, and playback category passed.');
   const save=async()=>{await tap('#save');return evaluate(`probe.blobs['application/json'].text().then(JSON.parse)`);};
   const open=async drawing=>{await evaluate(`(()=>{const transfer=new DataTransfer();transfer.items.add(new File([JSON.stringify(${JSON.stringify(drawing)})],'song.json',{type:'application/json'}));const input=document.querySelector('#file');input.files=transfer.files;input.dispatchEvent(new Event('change'));})()`);for(let i=0;i<100;i++){if(await evaluate(`document.querySelector('#status').textContent==='Song opened.'`))return;await sleep(25);}throw new Error('Song import failed');};
-  const first=await save();assert.equal(first.pages[0].strokes[0].sound,'chip');
+  const first=await save();assert.equal(first.pages[0].strokes[0].sound,Object.values(PENS).at(-1).sound);
   await tap('#page-add');await tap('[data-pen="teal"]');await draw([{x:.1,y:.2},{x:.9,y:.2}]);
   const two=await save();assert.equal(two.pages.length,2);assert.equal(two.pages[1].strokes[0].sound,'keys');assert.equal(two.song,true);
   await tap('#page-copy');const three=await save();assert.equal(three.pages.length,3);assert.deepEqual(three.pages[2],three.pages[1]);
-  await tap('#page-earlier');await tap('#page-earlier');const reordered=await save();assert.equal(reordered.pages[0].strokes[0].sound,'keys');assert.equal(reordered.pages[1].strokes[0].sound,'chip');
+  await tap('#page-earlier');await tap('#page-earlier');const reordered=await save();assert.equal(reordered.pages[0].strokes[0].sound,'keys');assert.equal(reordered.pages[1].strokes[0].sound,first.pages[0].strokes[0].sound);
   await tap('#page-delete');assert.equal((await save()).pages.length,2);await tap('#undo');assert.deepEqual((await save()).pages,reordered.pages);
   const song={...two,settings:{...two.settings,bpm:200},selectedPage:0};
   await open(song);assert.deepEqual(await save(),song);
