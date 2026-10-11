@@ -86,7 +86,16 @@ assert.deepEqual(parseDrawing(JSON.parse(JSON.stringify(saved))),saved);
 assert.throws(()=>parseDrawing({...saved,pages:[]}));
 assert.throws(()=>parseDrawing({...saved,pages:Array(17).fill(pages[0])}));
 assert.throws(()=>parseDrawing({...saved,selectedPage:3}));
-assert.throws(()=>parseDrawing({...saved,pages:[{strokes:Array(33).fill(line)},{strokes:Array(33).fill(line)}]}));
+// Each loop has its own stroke budget; the song budget covers all loops.
+const fullLoop={strokes:Array(LIMITS.strokes).fill(line)};
+assert.equal(parseDrawing({...saved,pages:[fullLoop,fullLoop],selectedPage:0}).pages[1].strokes.length,LIMITS.strokes);
+assert.throws(()=>parseDrawing({...saved,pages:[{strokes:Array(LIMITS.strokes+1).fill(line)}],selectedPage:0}));
+const songPages=Array(Math.ceil((LIMITS.songStrokes+1)/LIMITS.strokes)).fill(fullLoop);
+assert.ok(songPages.length<=LIMITS.pages);
+assert.throws(()=>parseDrawing({...saved,pages:songPages,selectedPage:0}));
+// A full song of 150-point strokes at the app's 4-decimal precision must fit one saved file.
+const longStroke={pen:'copper',sound:'keys',object:LIMITS.strokes,points:Array.from({length:150},(_,i)=>({x:.1234+i/1e4,y:.5678}))};
+assert.ok(new TextEncoder().encode(JSON.stringify({...saved,pages:Array(LIMITS.songStrokes/LIMITS.strokes).fill({strokes:Array(LIMITS.strokes).fill(longStroke)})})).length<=LIMITS.fileBytes);
 assert.equal(eraseAt([line],{x:.5,y:.57},.05,.05,1).length,1);
 const sustained=compileLoop([{...diagonal,sound:'flute'}],songSettings);
 const voices=audioTimeline(sustained.events);
@@ -134,7 +143,7 @@ assert.deepEqual(eraseObjectAt([...grouped,other],{x:.45,y:.25},.01,.01),grouped
 assert.deepEqual(eraseObjectAt(grouped,{x:.45,y:.25},.01,.01),[],'Both contours must erase together');
 assert.deepEqual(eraseObjectAt(grouped,{x:.01,y:.01},.01,.01),grouped);
 assert.ok(eraseAt(grouped,{x:.45,y:.25},.02,.02).every(s=>s.object===1),'Brush pieces retain their object identity');
-assert.throws(()=>parseDrawing({...saved,pages:[{strokes:[{...line,object:65}]}],selectedPage:0}));
+assert.throws(()=>parseDrawing({...saved,pages:[{strokes:[{...line,object:LIMITS.strokes+1}]}],selectedPage:0}));
 const held={time:0,duration:3,midi:60,sound:'flute',path:[{time:0,midi:60,duration:1},{time:1,midi:64,duration:1},{time:2,midi:67,duration:1}]};
 const resumed=remainingEvent(held,1.5);assert.equal(resumed.midi,64);assert.equal(resumed.duration,1.5);assert.deepEqual(resumed.path.map(n=>[n.time,n.midi]),[[0,64],[.5,67]]);
 assert.equal(remainingEvent(held,3),null);assert.equal(remainingEvent(held,0),null);

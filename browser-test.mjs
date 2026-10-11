@@ -1,7 +1,7 @@
 // Exercises the real app with Chromium touch input and analyses its exported PCM.
 // This verifies browser wiring, not physical iPhone speaker output.
 import assert from 'node:assert/strict';
-import {PENS} from './dist/music.mjs';
+import {PENS,LIMITS} from './dist/music.mjs';
 import {launchBrowser,sleep} from './browser-driver.mjs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -184,9 +184,13 @@ try{
   const four=await save();assert.equal(four.pages[0].strokes.length,4);
   await tap('#undo');assert.equal((await save()).pages[0].strokes.length,0,'All four reflections must undo together');
   await tap('#redo');assert.deepEqual((await save()).pages,four.pages);
-  const nearFull={...emptySong,pages:[{strokes:Array.from({length:63},()=>four.pages[0].strokes[0])}]};
+  const nearFull={...emptySong,pages:[{strokes:Array.from({length:LIMITS.strokes-1},()=>four.pages[0].strokes[0])}]};
   await open(nearFull);await control('#shape','rectangle');await draw([{x:.1,y:.1},{x:.3,y:.3}],false);
-  assert.equal((await save()).pages[0].strokes.length,63,'Capacity must reject the whole symmetric shape');
+  assert.match(await evaluate(`document.querySelector('#status').textContent`),/loop is full/);
+  assert.equal((await save()).pages[0].strokes.length,LIMITS.strokes-1,'Capacity must reject the whole symmetric shape');
+  // A full loop leaves room to draw a new picture in another loop.
+  await open({...nearFull,pages:[...nearFull.pages,{strokes:[]}],selectedPage:1,song:true});await control('#shape','rectangle');await draw([{x:.1,y:.1},{x:.3,y:.3}],false);
+  assert.equal((await save()).pages[1].strokes.length,16,'Four-way rectangle in another loop must accept strokes while one loop is full');
   await open(emptySong);await control('#symmetry','off');await control('#shape','triangle');
   await draw([{x:.2,y:.25},{x:.7,y:.75}],true,async()=>{
     await send('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]});

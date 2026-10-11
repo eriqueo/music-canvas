@@ -1,4 +1,5 @@
-export const LIMITS = { strokes: 64, pages:16, songEvents:16384, points: 1024, history: 24, events: 4096, voices: 32, fileBytes: 4 * 1024 * 1024 };
+// strokes caps one loop; songStrokes caps all loops so a song stays under fileBytes.
+export const LIMITS = { strokes: 256, songStrokes: 1024, pages:16, songEvents:16384, points: 1024, history: 24, events: 4096, voices: 32, fileBytes: 4 * 1024 * 1024 };
 export const PULSES_PER_LOOP=8;
 export const KEYS = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
 export const SCALES = {
@@ -214,7 +215,7 @@ export function eraseAt(strokes, point, radiusX, radiusY, limit=LIMITS.strokes) 
     }
     flush();
   }
-  // At capacity keep the first 64 surviving pieces and shed later pieces.
+  // At capacity keep the first surviving pieces up to the limit and shed later pieces.
   return result.slice(0, limit);
 }
 export function parseDrawing(value) {
@@ -223,7 +224,7 @@ export function parseDrawing(value) {
   if(value.version===DRAWING_VERSION){
     if(!Array.isArray(value.pages)||!value.pages.length||value.pages.length>LIMITS.pages||!Number.isInteger(value.selectedPage)||value.selectedPage<0||value.selectedPage>=value.pages.length||typeof value.song!=='boolean')fail();
     const pages=value.pages.map(page=>({strokes:parseDrawing({version:2,settings:value.settings,strokes:page?.strokes}).pages[0].strokes}));
-    if(pages.reduce((n,p)=>n+p.strokes.length,0)>LIMITS.strokes)fail();
+    if(pages.reduce((n,p)=>n+p.strokes.length,0)>LIMITS.songStrokes)fail();
     const normalized=parseDrawing({version:2,settings:value.settings,strokes:[]});
     return {version:DRAWING_VERSION,settings:normalized.settings,pages,selectedPage:value.selectedPage,song:value.song};
   }

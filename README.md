@@ -116,7 +116,7 @@ Thumbnails are REPLACEABLE projections of the stored vectors and are rebuilt on 
 Save song produces an editable version-3 JSON
 file managed by the user. Version-1 and version-2 files remain readable and retain
 their explicit instruments. Version 3 accepts an optional per-stroke pitchStep (1 for semitones, 0.5 for quarter tones), and
-optional per-page stroke object number (1–64) to preserve gesture groups. Missing pitchStep retains the original scale-note mapping. Current readers preserve
+optional per-page stroke object number (1–256) to preserve gesture groups. Missing pitchStep retains the original scale-note mapping. Current readers preserve
 resolution in song files; legacy readers ignore it and play scale notes.
 MIDI uses separate pitch-bend channels for quarter tones. It rejects exports that
 need more than 15 non-drum instrument/tuning combinations; WAV has no MIDI channel
@@ -126,8 +126,11 @@ No server database, hosted service, or external runtime
 asset is required. MIDI uses the compiled scale notes with instrument programs and
 percussion channel 10; live audio and WAV share the sustained voice timeline.
 
-Capacity limits are defined in `dist/music.mjs`: 16 pages, 64 total strokes, 1024 points
-per stroke, 24 history entries, 4096 events per loop, and 16384 events per song.
+Capacity limits are defined in `dist/music.mjs`: 16 pages, 256 strokes per loop,
+1024 strokes per song, 1024 points per stroke, 24 history entries, 4096 events per
+loop, and 16384 events per song. A full loop leaves other loops drawable; the status
+line names the limit reached. New points keep four decimals so a full song fits the
+4 MB file limit.
 Adding or copying pages and drawing further strokes reject work at capacity;
 history drops its oldest entry; compiled events and eraser pieces
 drop later entries; live audio stops its oldest voice. Playback pauses in hidden tabs and retains its position; Play resumes it.
