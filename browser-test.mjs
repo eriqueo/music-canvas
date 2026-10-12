@@ -63,7 +63,7 @@ try{
   await tap('[data-picker="scene"]');assert.equal(await evaluate(`document.querySelectorAll('#choices canvas').length`),7,'Drawing choices must show previews of the actual vectors');
   if(process.argv[3]){const capture=await send('Page.captureScreenshot',{format:'png'});await writeFile(process.argv[3].replace(/\.png$/,'-pictures.png'),Buffer.from(capture.data,'base64'));}
   await tap('[data-choice="forest"]');assert.ok(parseInt(await evaluate(`document.querySelector('#stroke-count').textContent`))>0);await tap('#undo');
-  await tap('[data-picker="snap"]');await tap('[data-choice="quarter"]');assert.equal(await evaluate(`document.querySelector('#snap').value`),'quarter');
+  await tap('[data-picker="snap"]');await tap('[data-choice="whole"]');assert.equal(await evaluate(`document.querySelector('#snap').value`),'whole');
   await tap('[data-picker="snap"]');await tap('[data-choice="free"]');
   await tap('#tune');assert.ok(await evaluate(`document.querySelector('#tune-dialog').open`));await tap('[data-close="tune-dialog"]');
   await tap('#export');assert.ok(await evaluate(`document.querySelector('#export-dialog').open`));await tap('[data-close="export-dialog"]');
@@ -95,7 +95,9 @@ try{
     await evaluate(`document.querySelector('#canvas').dispatchEvent(new PointerEvent('pointercancel',{pointerId:999,bubbles:true}));`);
     assert.equal(await evaluate(`document.querySelector('#pitch').textContent`),pitch,'Canceling an extra pointer must preserve the active drawing');
   });
-  assert.equal(await evaluate(`document.querySelector('#timing').value`),'96');
+  assert.deepEqual(await evaluate(`['timing','range','scale','key','tempo'].map(id=>document.querySelector('#'+id).value)`),['12','3','pentatonic','0','120'],'Defaults match the reference: C major pentatonic, 3 octaves, 1/8 triplets, 120 BPM');
+  // The glide fixture below exercises Free timing over two octaves.
+  await evaluate(`for(const [id,value] of [['timing','96'],['range','2']]){const c=document.querySelector('#'+id);c.value=value;c.dispatchEvent(new Event('change'));}`);
   for(const [pen,{sound}] of Object.entries(PENS)){
     await tap(`[data-pen="${pen}"]`);
     await draw([{x:.1,y:.9},{x:.12,y:.1}]);
@@ -246,21 +248,20 @@ try{
   await tap('#undo');assert.deepEqual((await save()).pages,gridDrawing.pages);
   await control('#drawing-view','drawing');
   await open(emptySong);await control('#shape','pen');await tap('[data-pen="blue"]');
-  for(const view of ['drawing','grid'])for(const mode of ['free','whole','half','quarter']){
+  for(const view of ['drawing','grid'])for(const mode of ['free','whole']){
     await control('#drawing-view',view);await control('#snap',mode);await draw([{x:.103,y:.437},{x:.903,y:.437}]);
     const drawing=await save(),stroke=drawing.pages[0].strokes[0];
-    assert.equal(stroke.pitchStep,{half:1,quarter:.5}[mode]);
+    assert.equal(stroke.pitchStep,undefined);
     const y=stroke.points[0].y;
-    assert.ok(Math.abs(y-{free:.437,whole:.4,half:.45,quarter:.425}[mode])<.002,`${mode} pitch snapping must work in ${view}`);
+    assert.ok(Math.abs(y-{free:.437,whole:.4}[mode])<.002,`${mode} pitch snapping must work in ${view}`);
   }
-  const quarterSong=await save();await open(quarterSong);assert.deepEqual((await save()).pages,quarterSong.pages,'Quarter-tone resolution must round-trip');
   await evaluate('probe.notes=[]');await tap('#play');await sleep(1000);await tap('#pause');
   const actualMidi=await evaluate('probe.notes.map(f=>69+12*Math.log2(f/440))');
-  assert.ok(actualMidi.some(m=>Math.abs(m-61.5)<.001),'Live audio must play the quarter tone, not round it to a scale note');
+  assert.ok(actualMidi.length&&actualMidi.every(m=>Math.abs(m-Math.round(m))<.001),'Live audio plays only whole scale notes');
   await tap('#stop');await control('#drawing-view','drawing');await control('#snap','free');
   assert.ok(await evaluate(`!document.querySelector('#random')`),'Surprise me must have one control in the Drawing menu');
   for(const scene of ['orbits','diamonds','waves','stairs']){await control('#scene',scene);assert.ok((await save()).pages[0].strokes.length>=3);}
-  console.log('Pitch snapping in both views, Free geometry, saved quarter tones, microtonal live audio, combined Drawing menu and geometric presets passed.');
+  console.log('Pitch snapping in both views, Free geometry, scale-only live audio, combined Drawing menu and geometric presets passed.');
   console.log('Scene selection and Undo, hover and playback dots, frozen Pause markers, lossless view changes, snapped grid taps and grid erase passed.');
   console.log('Viewport bars, random drawings and Undo, saved object erase, brush erase, Pause/resume and Stop passed.');
   console.log('Touch shapes and preview, two-voice oval playback, round circles, shape Undo/Redo, mirrors, resize, save/open, capacity, and cancel passed.');

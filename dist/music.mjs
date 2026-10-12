@@ -1,11 +1,12 @@
 // strokes caps one loop; songStrokes caps all loops so a song stays under fileBytes.
-export const LIMITS = { strokes: 256, songStrokes: 1024, pages:16, songEvents:16384, points: 1024, history: 24, events: 4096, voices: 32, fileBytes: 4 * 1024 * 1024 };
+// polyphony caps drawn notes per timing step so dense pictures stay clear.
+export const LIMITS = { strokes: 256, songStrokes: 1024, pages:16, songEvents:16384, points: 1024, history: 24, events: 4096, voices: 32, polyphony: 6, fileBytes: 4 * 1024 * 1024 };
 export const PULSES_PER_LOOP=8;
 export const KEYS = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
 export const SCALES = {
   major: { label: 'Major', intervals: [0, 2, 4, 5, 7, 9, 11] },
   minor: { label: 'Natural minor', intervals: [0, 2, 3, 5, 7, 8, 10] },
-  pentatonic: { label: 'Pentatonic', intervals: [0, 2, 4, 7, 9] },
+  pentatonic: { label: 'Major pentatonic', intervals: [0, 2, 4, 7, 9] },
   dorian: { label: 'Dorian', intervals: [0, 2, 3, 5, 7, 9, 10] },
 };
 export const INSTRUMENTS = {
@@ -51,16 +52,12 @@ export function notesFor(key, scale, octave, range = 2) {
     return { midi, label: KEYS[midi % 12], octave: Math.floor(midi / 12) - 1, degree: degree % intervals.length + 1 };
   });
 }
-export const SNAP_MODES={free:{label:'Free'},whole:{label:'Whole'},half:{label:'Half',step:1},quarter:{label:'Quarter',step:.5}};
-export function pitchPositions(notes,step){
-  if(!step)return notes.map((note,i)=>({...note,y:i/(notes.length-1)}));
-  const high=notes[0].midi,low=notes.at(-1).midi;
-  return Array.from({length:Math.round((high-low)/step)+1},(_,i)=>{
-    const midi=high-i*step;let row=0;
-    while(row<notes.length-2&&midi<notes[row+1].midi)row++;
-    const y=(row+(notes[row].midi-midi)/(notes[row].midi-notes[row+1].midi))/(notes.length-1);
-    const integer=Math.floor(midi);return {midi,y,label:KEYS[integer%12],octave:Math.floor(integer/12)-1,cents:midi%1?50:0};
-  });
+// Every drawn pitch is a scale note; snapping only moves the pen onto a scale row.
+export const SNAP_MODES={free:{label:'Free'},whole:{label:'Scale'}};
+// Version-3 files may carry semitone or quarter-tone steps; they now play on the scale.
+const LEGACY_PITCH_STEPS=[1,.5];
+export function pitchPositions(notes){
+  return notes.map((note,i)=>({...note,y:i/(notes.length-1)}));
 }
 export function pitchAt(y,notes){
   if(notes[0].y===undefined)return notes[Math.max(0,Math.min(notes.length-1,Math.round(y*(notes.length-1))))];
@@ -68,10 +65,12 @@ export function pitchAt(y,notes){
 }
 export function snapPitch(point,notes,mode){
   if(mode==='free')return point;
-  const note=pitchAt(point.y,pitchPositions(notes,SNAP_MODES[mode].step));
+  const note=pitchAt(point.y,pitchPositions(notes));
   return {...point,y:note.y};
 }
 export const FREE_TIMING = 96; // Version-1 drawings use 96 for the Free menu option.
+// Notes per four beats; 12 is the eighth-note triplet default.
+export const TIMINGS = [8, 12, 16, 32, FREE_TIMING];
 function freeEvents(strokes, notes, bpm, swing, bars) {
   const duration=60/bpm*PULSES_PER_LOOP*bars, count=FREE_TIMING*bars, pulse=duration/count;
   const timeAt=x=>{const step=Math.min(count-1,Math.floor(x*count)),fraction=x*count-step;return Number((pulse*(step+(step%2?swing:0)+fraction*(step%2?1-swing:1+swing))).toFixed(12));};
@@ -85,10 +84,12 @@ function freeEvents(strokes, notes, bpm, swing, bars) {
     if(pieces>=LIMITS.events){limited=true;return;}
     pieces++;list.push({midi,sound,lane,start,end});ranges.set(key,list);
   };
+  const rows=pitchPositions(notes);
   for(const [lane,stroke] of strokes.entries()){
-    const rows=pitchPositions(notes,stroke.pitchStep);
     for(let i=0;i<Math.max(1,stroke.points.length-1);i++){
       let a=stroke.points[i],b=stroke.points[Math.min(i+1,stroke.points.length-1)];
+      // A vertical segment has no duration; sounding each row would stack a cluster.
+      if(stroke.points.length>1&&a.x===b.x)continue;
       if(a.x>b.x)[a,b]=[b,a];
       const cuts=[0,1],dy=b.y-a.y;
       if(dy)for(let row=0;row<rows.length-1;row++){
@@ -118,26 +119,33 @@ export function loopEvents(strokes, notes, bpm, swing, divisions = 16, bars = 1)
   // A loop has eight quarter-note beats: eighths need 16 steps per loop.
   const count = divisions * bars * PULSES_PER_LOOP / 4;
   const bins = Array.from({ length: count }, () => new Map());
+  const rows=pitchPositions(notes);
+  const sound=(bin,stroke,y)=>{const midi=pitchAt(y,rows).midi;bins[bin].set(`${stroke.sound}:${midi}`,{midi,sound:stroke.sound});};
+  // A stroke sounds where it crosses each step's centre line, like the playback dots:
+  // one note per crossing, so steep or vertical lines never stack a cluster.
   for (const stroke of strokes) {
-    const rows=pitchPositions(notes,stroke.pitchStep);
-    const points = stroke.points;
-    for (let i = 0; i < points.length; i++) {
+    const points = stroke.points;let crossed=false;
+    for (let i = 0; i < Math.max(1, points.length - 1); i++) {
       const a = points[i], b = points[Math.min(i + 1, points.length - 1)];
       const low = Math.min(a.x, b.x), high = Math.max(a.x, b.x);
-      const first = Math.min(count - 1, Math.floor(low * count)), last = Math.min(count - 1, Math.floor(high * count));
+      const first = Math.max(0, Math.ceil(low * count - .5 - 1e-9)), last = Math.min(count - 1, Math.floor(high * count - .5 + 1e-9));
       for (let bin = first; bin <= last; bin++) {
-        const x = Math.max(low, Math.min(high, (bin + .5) / count));
-        const fraction = Math.abs(b.x - a.x) < 1e-8 ? 0 : (x - a.x) / (b.x - a.x);
-        const midi = pitchAt(a.y + fraction * (b.y - a.y), rows).midi;
-        bins[bin].set(`${stroke.sound}:${midi}`, { midi, sound: stroke.sound });
+        crossed=true;
+        if (a.x === b.x) { sound(bin,stroke,a.y); sound(bin,stroke,b.y); continue; }
+        const x = (bin + .5) / count;
+        sound(bin,stroke,a.y + (x - a.x) / (b.x - a.x) * (b.y - a.y));
       }
     }
+    // A short mark between two centre lines still plays once, at its own step.
+    if (!crossed) sound(Math.min(count - 1, Math.floor(points[0].x * count)),stroke,points[0].y);
   }
   let time = 0;
   const events = [], active = new Map(), ticks = [];
   for (let bin = 0; bin < count; bin++) {
     const duration = (60 / bpm * 4 / divisions) * (bin % 2 === 0 ? 1 + swing : 1 - swing);
     ticks.push({ time, x: bin / count });
+    // At the polyphony cap keep held notes first, then the highest pitches; shed the rest.
+    if (bins[bin].size > LIMITS.polyphony) bins[bin] = new Map([...bins[bin]].sort(([m,a],[n,b]) => active.has(n) - active.has(m) || b.midi - a.midi).slice(0, LIMITS.polyphony));
     for (const name of active.keys()) if (!bins[bin].has(name)) active.delete(name);
     for (const [name, note] of bins[bin]) {
       if (active.has(name)) active.get(name).duration += duration;
@@ -230,7 +238,7 @@ export function parseDrawing(value) {
   }
   if(!Array.isArray(value.strokes)||value.strokes.length>LIMITS.strokes)fail();
   const s = value.settings;
-  if (!s || !Number.isInteger(s.key) || s.key < 0 || s.key > 11 || !Object.hasOwn(SCALES,s.scale) || !Number.isInteger(s.octave) || s.octave < 2 || s.octave > 5 || ![1,2,3].includes(s.range) || !Number.isFinite(s.bpm) || s.bpm < 40 || s.bpm > 200 || ![0,.2,.4].includes(s.swing) || ![8,16,32,96].includes(s.divisions) || ![1,2,4].includes(s.bars)) fail();
+  if (!s || !Number.isInteger(s.key) || s.key < 0 || s.key > 11 || !Object.hasOwn(SCALES,s.scale) || !Number.isInteger(s.octave) || s.octave < 2 || s.octave > 5 || ![1,2,3].includes(s.range) || !Number.isFinite(s.bpm) || s.bpm < 40 || s.bpm > 200 || ![0,.2,.4].includes(s.swing) || !TIMINGS.includes(s.divisions) || ![1,2,4].includes(s.bars)) fail();
   const parts=Object.fromEntries(Object.keys(LAYERS).map(id=>[id,false]));
   if(value.version===2){
     if(!s.parts||Object.keys(s.parts).length!==Object.keys(LAYERS).length)fail();
@@ -238,9 +246,9 @@ export function parseDrawing(value) {
   }
   const strokes = value.strokes.map(stroke => {
     if (!stroke || !Object.hasOwn(PENS,stroke.pen) || !Object.hasOwn(SOUNDS,stroke.sound) || !Array.isArray(stroke.points) || !stroke.points.length || stroke.points.length > LIMITS.points) fail();
-    if(stroke.pitchStep!==undefined&&!Object.values(SNAP_MODES).some(mode=>mode.step===stroke.pitchStep))fail();
+    if(stroke.pitchStep!==undefined&&!LEGACY_PITCH_STEPS.includes(stroke.pitchStep))fail();
     if(stroke.object!==undefined&&(!Number.isInteger(stroke.object)||stroke.object<1||stroke.object>LIMITS.strokes))fail();
-    return { ...(stroke.pitchStep===undefined?{}:{pitchStep:stroke.pitchStep}), ...(stroke.object===undefined?{}:{object:stroke.object}), pen: stroke.pen, sound: stroke.sound, points: stroke.points.map(p => { if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) fail(); return { x:p.x,y:p.y }; }) };
+    return { ...(stroke.object===undefined?{}:{object:stroke.object}), pen: stroke.pen, sound: stroke.sound, points: stroke.points.map(p => { if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) fail(); return { x:p.x,y:p.y }; }) };
   });
   return { version:DRAWING_VERSION, settings:{key:s.key,scale:s.scale,octave:s.octave,range:s.range,bpm:s.bpm,swing:s.swing,divisions:s.divisions,bars:s.bars,parts}, pages:[{strokes}], selectedPage:0, song:false };
 }
@@ -253,29 +261,16 @@ export function midiFile({ events, duration }, bpm) {
   const division = 480;
   const tempo = Math.round(60000000 / bpm);
   const toTicks = t => Math.round(t * bpm / 60 * division);
-  const key=e=>`${INSTRUMENTS[e.sound].program}:${e.midi%1}`;
-  const channels=new Map(),occupied=new Set([9]);
-  for(const e of events)if(!Object.hasOwn(DRUMS,e.sound)&&e.midi%1===0){channels.set(key(e),INSTRUMENTS[e.sound].channel);occupied.add(INSTRUMENTS[e.sound].channel);}
-  for(const e of events)if(!Object.hasOwn(DRUMS,e.sound)&&!channels.has(key(e))){
-    const available=Array.from({length:16},(_,i)=>i).find(i=>!occupied.has(i));
-    if(available===undefined)throw new Error('MIDI_CHANNEL_LIMIT');
-    occupied.add(available);channels.set(key(e),available);
-  }
-  const channel=e=>Object.hasOwn(DRUMS,e.sound)?9:channels.get(key(e));
+  // Each instrument owns a fixed channel; drums use General MIDI channel 10.
+  const channel=e=>Object.hasOwn(DRUMS,e.sound)?9:INSTRUMENTS[e.sound].channel;
   const timeline = events.flatMap(e => [
-    { tick: toTicks(e.time), bytes: [0x90|channel(e), Math.floor(e.midi), 90] },
-    { tick: toTicks(e.time + e.duration), bytes: [0x80|channel(e), Math.floor(e.midi), 0] },
+    { tick: toTicks(e.time), bytes: [0x90|channel(e), e.midi, 90] },
+    { tick: toTicks(e.time + e.duration), bytes: [0x80|channel(e), e.midi, 0] },
   ]).sort((a, b) => a.tick - b.tick || a.bytes[0] - b.bytes[0]);
   const track = [0, 0xff, 0x51, 3, tempo >> 16 & 255, tempo >> 8 & 255, tempo & 255];
   const programs=new Map();
   for(const e of events)if(!Object.hasOwn(DRUMS,e.sound))programs.set(channel(e),INSTRUMENTS[e.sound].program);
   for(const [channel,program] of programs)track.push(0,0xc0|channel,program);
-  for(const [id,ch] of channels){
-    // RPN 0 sets a two-semitone bend range; quarter tones use +50 cents.
-    const fraction=Number(id.split(':')[1]);if(!fraction)continue;
-    for(const [controller,value] of [[101,0],[100,0],[6,2],[38,0],[101,127],[100,127]])track.push(0,0xb0|ch,controller,value);
-    const bend=8192+Math.round(fraction/2*8192);track.push(0,0xe0|ch,bend&127,bend>>7);
-  }
   let previous = 0;
   for (const event of timeline) { track.push(...variableLength(event.tick - previous), ...event.bytes); previous = event.tick; }
   track.push(...variableLength(toTicks(duration) - previous), 0xff, 0x2f, 0);

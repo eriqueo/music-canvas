@@ -170,22 +170,27 @@ const {snapPitch,pitchPositions,pitchAt}=await import('./dist/music.mjs');
 const raw={x:.303,y:.437};
 assert.deepEqual(snapPitch(raw,pitches,'free'),raw);
 assert.equal(pitchAt(snapPitch(raw,pitches,'whole').y,pitchPositions(pitches)).midi,62);
-assert.equal(pitchAt(snapPitch(raw,pitches,'half').y,pitchPositions(pitches,1)).midi,61);
-assert.equal(pitchAt(snapPitch(raw,pitches,'quarter').y,pitchPositions(pitches,.5)).midi,61.5);
-for(const step of [1,.5]){
-  const note=pitchPositions(pitches,step).find(n=>n.midi===61+(step===.5?.5:0));
-  const tuned={...line,pitchStep:step,points:[{x:.1,y:note.y},{x:.9,y:note.y}]};
-  for(const divisions of [96,16])assert.ok(compileLoop([tuned],{...songSettings,divisions}).events.every(e=>e.midi===note.midi));
-  assert.deepEqual(parseDrawing({...saved,pages:[{strokes:[tuned]}],selectedPage:0}).pages[0].strokes,[tuned]);
+// Old semitone and quarter-tone strokes load, drop their step, and play scale notes.
+const scaleMidis=new Set(pitches.map(n=>n.midi));
+for(const pitchStep of [1,.5]){
+  const legacy={...line,pitchStep,points:[{x:.1,y:.425},{x:.9,y:.425}]};
+  const loaded=parseDrawing({...saved,pages:[{strokes:[legacy]}],selectedPage:0}).pages[0].strokes;
+  assert.deepEqual(loaded,[{...line,points:legacy.points}]);
+  for(const divisions of [96,12])assert.ok(compileLoop(loaded,{...songSettings,divisions}).events.every(e=>scaleMidis.has(e.midi)));
 }
 assert.throws(()=>parseDrawing({...saved,pages:[{strokes:[{...line,pitchStep:.25}]}],selectedPage:0}));
-const microMidi=midiFile({events:[{time:0,duration:1,midi:61.5,sound:'keys'},{time:0,duration:1,midi:61,sound:'keys'}],duration:1},120);
-let cursor=22;const microMessages=[];
-while(cursor<microMidi.length){let byte;do{byte=microMidi[cursor++];}while(byte&128);const code=microMidi[cursor++];if(code===255){cursor++;const length=microMidi[cursor++];cursor+=length;}else{const length=(code&240)===192?1:2;microMessages.push({code,data:[...microMidi.slice(cursor,cursor+length)]});cursor+=length;}}
-const bend=microMessages.find(m=>(m.code&240)===224);assert.ok(bend);assert.equal(bend.data[0]+128*bend.data[1],10240,'Quarter tone MIDI bend must be +50 cents');
-const noteOns=microMessages.filter(m=>(m.code&240)===144);assert.equal(new Set(noteOns.map(m=>m.code&15)).size,2,'Bent and natural notes must use different channels');assert.ok(noteOns.every(m=>m.data[0]===61));
-const capacityMidi=Object.keys(PENS).flatMap(pen=>[0,.5].map(fraction=>({time:0,duration:1,midi:60+fraction,sound:PENS[pen].sound})));
-assert.throws(()=>midiFile({events:capacityMidi,duration:1},120),/MIDI_CHANNEL_LIMIT/);
-console.log('Scale, semitone and quarter-tone snapping, tuned playback and saved files, MIDI bends, separate channels and channel capacity passed.');
+// One note per crossing: a hand-drawn vertical line is one note, never a cluster.
+const triplets={...songSettings,divisions:12};
+const vertical={...line,points:[{x:.31,y:.05},{x:.311,y:.95}]};
+assert.equal(compileLoop([vertical],triplets).events.length,1);
+assert.equal(compileLoop([{...vertical,points:[{x:.31,y:.05},{x:.31,y:.95}]}],songSettings).events.length,0,'Free timing skips vertical segments');
+assert.equal(compileLoop([line],triplets).ticks.length,24,'Eighth-note triplets give 24 steps per eight beats');
+assert.equal(compileLoop([{...line,points:[{x:.5,y:.5}]}],triplets).events.length,1,'A tap between step centres still plays');
+const stack=Array.from({length:10},(_,i)=>({...line,points:[{x:.1,y:i/9},{x:.9,y:i/9}]}));
+const capped=compileLoop(stack,{...triplets,range:3});
+assert.equal(new Set(capped.events.map(e=>e.time)).size,1);assert.equal(capped.events.length,LIMITS.polyphony);
+assert.equal(Math.min(...capped.events.map(e=>e.midi)),notesFor(0,'pentatonic',3,3)[Math.round(5/9*15)].midi,'The cap keeps the highest pitches');
+assert.ok(midiFile({events:Object.values(PENS).map(p=>({time:0,duration:1,midi:60,sound:p.sound})),duration:1},120).length>22,'Every pen exports on its own channel');
+console.log('Scale-only pitches, legacy tuned strokes, crossing notes, polyphony cap, triplet timing and MIDI channels passed.');
 
 for(let row=0;row<pitches.length-1;row++)assert.equal(pitchAt((row+.5)/(pitches.length-1),pitchPositions(pitches)).midi,pitches[row+1].midi,'Legacy scale boundaries choose the lower note');

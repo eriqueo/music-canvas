@@ -38,12 +38,17 @@ The hover line and dots hide during drawing and erasing; Pause
 keeps the dots in place and Stop clears them.
 Grid editor projects the same vectors into time columns and scale-note rows without
 changing saved drawings or playback. New grid marks snap horizontally to time cells; a tap fills
-one time column, and brush erase cuts the selected cell. Pitch snapping is independent
-of view: Free leaves the pen unsnapped, Whole uses scale notes, Half uses semitones,
-and Quarter uses quarter tones. New strokes keep their chosen pitch resolution.
-Existing strokes retain their pitches when the snapping control changes. Free timing uses 32
-columns per eight beats; other timing settings follow their note divisions. The
-view preference is local browser state.
+one time column, and brush erase cuts the selected cell. Every note is a scale note.
+Pitch snapping is independent of view: Free leaves the pen unsnapped and Scale moves it
+onto scale rows. Older songs with semitone or quarter-tone strokes play on the scale.
+Free timing uses 32 columns per eight beats; other timing settings follow their note
+divisions. The view preference is local browser state.
+
+Defaults follow the play_music_theory reference: C major pentatonic, three octaves from
+C3, eighth-note triplets and 120 BPM. With a timing grid, a stroke sounds once wherever
+it crosses each step's centre line, matching the playback dots, so vertical lines never
+stack clusters. Each step plays at most six drawn notes; held notes stay first, then the
+highest pitches. Free timing skips vertical segments for the same reason.
 
 Brush erase cuts lines. Object erase selects the nearest contour once per tap and
 removes its full gesture, including mirrored copies. Old ungrouped lines erase alone.
